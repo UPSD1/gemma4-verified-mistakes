@@ -121,6 +121,8 @@ if __name__ == "__main__":
     ap.add_argument("--timeout", type=int, default=1500)
     ap.add_argument("--limit", type=int)
     ap.add_argument("--only", help="comma-separated instance_ids")
+    ap.add_argument("--since", help="only tasks created on/after this date, e.g. 2021-01-01 "
+                    "(older commits rarely install on modern Python)")
     a = ap.parse_args()
 
     PIP_CACHE.mkdir(parents=True, exist_ok=True)
@@ -128,6 +130,8 @@ if __name__ == "__main__":
     if a.only:
         keep = set(a.only.split(","))
         tasks = [t for t in tasks if t["instance_id"] in keep]
+    if a.since:
+        tasks = [t for t in tasks if t["created_at"] >= a.since]
     # Fixed-seed shuffle so partial runs are balanced across repos.
     import random
     random.Random(0).shuffle(tasks)
