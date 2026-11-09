@@ -12,14 +12,18 @@ pip install -q -e . >/tmp/install.log 2>&1 || pip install -q . >>/tmp/install.lo
 for req in requirements-tests.txt requirements-dev.txt dev-requirements.txt requirements.txt requirements/testing.txt; do
   if [ -f "$req" ]; then pip install -q -r "$req" >>/tmp/install.log 2>&1 || true; fi
 done
-pip install -q pytest >>/tmp/install.log 2>&1
+pip install -q pytest pytest-timeout anyio >>/tmp/install.log 2>&1
+# Requirement files can pull the package itself from PyPI (already containing the fix).
+# Reinstall the checked-out code last so the repo at base_commit is what gets tested.
+pip install -q --no-deps --force-reinstall -e . >>/tmp/install.log 2>&1
+python -c "import importlib.metadata as m, sys; d=m.distribution('$(basename $(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['name'])" 2>/dev/null || echo x))'); print('INSTALLED_FROM', d.read_text('direct_url.json'))" 2>/dev/null | head -1
 git add -A >/dev/null 2>&1; git commit -qm baseline --allow-empty >/dev/null 2>&1
 
 TEST_FILES=$(cat /task/test_files.txt)
 
 run_tests () {  # $1 = label
   echo "=== RUN $1"
-  timeout 600 python -m pytest $TEST_FILES -rA --tb=no -q -p no:cacheprovider 2>&1 | grep -E '^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS) ' || true
+  timeout 600 python -m pytest $TEST_FILES -o addopts="" -o filterwarnings="" -rA --tb=no -q -p no:cacheprovider 2>&1 | grep -E '^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS) ' || true
   echo "=== END $1"
 }
 
