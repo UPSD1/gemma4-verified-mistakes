@@ -1,0 +1,7 @@
+# All data stays out of git: competition data may not be redistributed,
+# and mined tasks are released separately once verified.
+data/
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
