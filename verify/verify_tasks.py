@@ -91,7 +91,7 @@ def extract_fail_log(output, f2p):
     return text
 
 
-def verify(task, image, repeats, timeout, before_repeats=2):
+def verify(task, image, repeats, timeout, before_repeats=2, extras="", extra_pip=""):
     tid = task["instance_id"]
     tests = changed_test_files(task["test_patch"])
     if not tests:
@@ -111,6 +111,7 @@ def verify(task, image, repeats, timeout, before_repeats=2):
         (tdir / "test_files.txt").write_text(" ".join(tests))
         cmd = ["docker", "run", "--rm", "--network", "bridge",
                "-e", f"REPEATS={repeats}", "-e", f"BEFORE_REPEATS={before_repeats}",
+               "-e", f"EXTRAS={extras}", "-e", f"EXTRA_PIP={extra_pip}",
                "-v", f"{work}:/work", "-v", f"{tdir}:/task:ro",
                "-v", f"{SCRIPT}:/run.sh:ro", "-v", f"{PIP_CACHE}:/root/.cache/pip",
                image, "bash", "/run.sh"]
@@ -160,6 +161,8 @@ if __name__ == "__main__":
     ap.add_argument("--only", help="comma-separated instance_ids")
     ap.add_argument("--since", help="only tasks created on/after this date, e.g. 2021-01-01 "
                     "(older commits rarely install on modern Python)")
+    ap.add_argument("--extras", default="", help='package extras to install, e.g. "grpc" (default none)')
+    ap.add_argument("--extra-pip", default="", help='extra test packages, e.g. "pytest-asyncio" (default none)')
     ap.add_argument("--shard", help="K/N: verify only every N-th task starting at K (0-based), "
                     "to split one run across machines; merge with verify/merge_logs.py")
     a = ap.parse_args()
@@ -188,7 +191,7 @@ if __name__ == "__main__":
     lock = threading.Lock()
 
     def run(t):
-        r = verify(t, a.image, a.repeats, a.timeout, a.before_repeats)
+        r = verify(t, a.image, a.repeats, a.timeout, a.before_repeats, a.extras, a.extra_pip)
         with lock:
             done[t["instance_id"]] = r
             with open(log_path, "a") as f:

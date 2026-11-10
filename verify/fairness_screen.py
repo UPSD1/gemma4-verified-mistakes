@@ -19,6 +19,8 @@ OpenRouter, ...); set RATER_BASE_URL, RATER_MODEL and RATER_API_KEY (in .env).
     python3 verify/fairness_screen.py --in data/tasks/grpc/verified.jsonl --dry-run
     python3 verify/fairness_screen.py --in data/tasks/grpc/verified.jsonl
     python3 verify/fairness_screen.py --in data/ood45.jsonl --out data/ood45.rated.jsonl
+    # Opus 5.5 ($4 in / $20 out per M tokens) with a $5 cap: stops starting new tasks at $5
+    python3 verify/fairness_screen.py --in X.jsonl --price-in 4 --price-out 20 --max-cost 5
 """
 import argparse
 import json
@@ -98,7 +100,9 @@ def chat(base_url, model, api_key, prompt, temperature, timeout=180):
     req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions", data=body, headers={
         "Content-Type": "application/json", "Authorization": f"Bearer {api_key}"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.load(resp)["choices"][0]["message"]["content"]
+        data = json.load(resp)
+    usage = data.get("usage") or {}
+    return data["choices"][0]["message"]["content"], usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
 
 
 def screen(task, ask, ratings, threshold):
@@ -134,6 +138,9 @@ if __name__ == "__main__":
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--price-in", type=float, default=0.0, help="USD per 1M input tokens, for the cost cap")
+    ap.add_argument("--price-out", type=float, default=0.0, help="USD per 1M output tokens")
+    ap.add_argument("--max-cost", type=float, help="stop starting new tasks once spend reaches this (USD)")
     ap.add_argument("--dry-run", action="store_true", help="print the first prompt and exit")
     a = ap.parse_args()
 
@@ -151,11 +158,23 @@ if __name__ == "__main__":
     done = {r["instance_id"]: r for r in read_jsonl(log_path) if r["status"] != "rater_failed"} \
         if log_path.exists() else {}
     todo = [t for t in tasks if t["instance_id"] not in done]
-    print(f"{len(tasks)} tasks, {len(todo)} to rate ({len(done)} already rated) with {model}")
+    est_in = sum(len(build_prompt(t)) for t in todo) / 3.5 * a.ratings
+    est = (est_in * a.price_in + len(todo) * a.ratings * 150 * a.price_out) / 1e6
+    print(f"{len(tasks)} tasks, {len(todo)} to rate ({len(done)} already rated) with {model}; "
+          f"estimated cost ${est:.2f}" + (f", cap ${a.max_cost:.2f}" if a.max_cost else ""))
     lock = threading.Lock()
+    spent = [0.0]
+
+    def ask(prompt):
+        text, tin, tout = chat(base_url, model, key or "none", prompt, a.temperature)
+        with lock:
+            spent[0] += (tin * a.price_in + tout * a.price_out) / 1e6
+        return text
 
     def run(t):
-        r = screen(t, lambda p: chat(base_url, model, key or "none", p, a.temperature), a.ratings, a.threshold)
+        if a.max_cost and spent[0] >= a.max_cost:
+            return  # over budget: left unrated, so a later run resumes here
+        r = screen(t, ask, a.ratings, a.threshold)
         with lock:
             done[t["instance_id"]] = r
             with open(log_path, "a") as f:
@@ -164,6 +183,8 @@ if __name__ == "__main__":
 
     with ThreadPoolExecutor(a.workers) as pool:
         list(pool.map(run, todo))
+    print(f"spent ${spent[0]:.2f}" + (f" of ${a.max_cost:.2f} cap" if a.max_cost else "")
+          + (" (cap reached; rerun later to finish)" if a.max_cost and spent[0] >= a.max_cost else ""))
 
     kept = []
     for t in tasks:

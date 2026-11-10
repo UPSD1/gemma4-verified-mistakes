@@ -8,11 +8,14 @@ git config --global user.email v@v && git config --global user.name v
 git config --global --add safe.directory /work
 
 echo "=== SETUP"
-pip install -q -e . >/tmp/install.log 2>&1 || pip install -q . >>/tmp/install.log 2>&1 || { echo "SETUP_FAILED install"; tail -20 /tmp/install.log; exit 3; }
+# EXTRAS (e.g. "grpc") installs the package's optional extras; empty by default, so the main
+# verification is unchanged. Used for the gRPC slice, whose tests skip without grpcio.
+TARGET="."; [ -n "${EXTRAS:-}" ] && TARGET=".[${EXTRAS}]"
+pip install -q -e "$TARGET" >/tmp/install.log 2>&1 || pip install -q "$TARGET" >>/tmp/install.log 2>&1 || { echo "SETUP_FAILED install"; tail -20 /tmp/install.log; exit 3; }
 for req in requirements-tests.txt requirements-dev.txt dev-requirements.txt requirements.txt requirements/testing.txt; do
   if [ -f "$req" ]; then pip install -q -r "$req" >>/tmp/install.log 2>&1 || true; fi
 done
-pip install -q pytest pytest-timeout anyio >>/tmp/install.log 2>&1
+pip install -q pytest pytest-timeout anyio ${EXTRA_PIP:-} >>/tmp/install.log 2>&1
 # Requirement files can pull the package itself from PyPI (already containing the fix).
 # Reinstall the checked-out code last so the repo at base_commit is what gets tested.
 pip install -q --no-deps --force-reinstall -e . >>/tmp/install.log 2>&1
