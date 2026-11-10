@@ -27,7 +27,18 @@ run_tests () {  # $1 = label
   echo "=== END $1"
 }
 
+# Full pytest output with short tracebacks, as a CI job would show it. Used to write
+# log-based bug reports for tasks whose only description is the PR body (which can leak the fix).
+run_log () {
+  echo "=== LOG"
+  timeout 600 python -m pytest $TEST_FILES -o addopts="" -o filterwarnings="" -rf --tb=short -q -p no:cacheprovider 2>&1 | tail -c 20000 || true
+  echo "=== ENDLOG"
+}
+
 git apply /task/test.patch || { echo "SETUP_FAILED test_patch_apply"; exit 3; }
-run_tests before
+# Run the pre-fix tests more than once: a test that fails by chance before the fix
+# would otherwise be counted as fail-to-pass.
+for i in $(seq 1 "${BEFORE_REPEATS:-2}"); do run_tests "before$i"; done
+run_log
 git apply /task/fix.patch || { echo "SETUP_FAILED fix_patch_apply"; exit 3; }
-for i in $(seq 1 "${REPEATS:-2}"); do run_tests "after$i"; done
+for i in $(seq 1 "${REPEATS:-3}"); do run_tests "after$i"; done

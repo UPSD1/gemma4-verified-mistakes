@@ -2,10 +2,12 @@
 
 For each task, in a fresh Docker container at base_commit:
   1. apply test_patch only        -> at least one test in the changed test files must FAIL
-  2. apply the fix (patch)        -> those tests must PASS, and nothing that passed before may fail
-  3. repeat step 2 (--repeats)    -> results must be identical (drop flaky tasks)
+  2. repeat step 1 (--before-repeats, default 2) -> identical results (drop flaky tasks)
+  3. one more pre-fix run with short tracebacks -> kept as `fail_log` (log-based bug reports)
+  4. apply the fix (patch)        -> those tests must PASS, and nothing that passed before may fail
+  5. repeat step 4 (--repeats, default 3) -> identical results (drop flaky tasks)
 
-Writes data/tasks/verified.jsonl (tasks with FAIL_TO_PASS / PASS_TO_PASS lists)
+Writes data/tasks/verified.jsonl (tasks with FAIL_TO_PASS / PASS_TO_PASS lists and fail_log)
 and data/tasks/verify_log.jsonl (one status line per task).
 
     python3 verify/verify_tasks.py --limit 5 --workers 2
@@ -58,7 +60,38 @@ def parse(output, label):
     return res
 
 
-def verify(task, image, repeats, timeout):
+SECTION_RE = re.compile(r"^_{3,} (.+?) _{3,}$", re.M)
+FAIL_LOG_CHARS = 4000
+
+
+def extract_fail_log(output, f2p):
+    """Pytest output from the pre-fix run, cut down to the failures of the fail-to-pass tests.
+
+    Keeps the traceback section of each fail-to-pass test (pytest titles them `test_x`,
+    `Class.test_x` or `test_x[param]`) plus the short summary, capped at FAIL_LOG_CHARS.
+    Falls back to the tail of the whole output when no section matches.
+    """
+    m = re.search(r"=== LOG\n(.*?)=== ENDLOG", output, re.S)
+    if not m:
+        return ""
+    log = m.group(1)
+    names = {t.split("::", 1)[1].replace("::", ".") for t in f2p if "::" in t}
+    heads = list(SECTION_RE.finditer(log))
+    parts = []
+    for i, h in enumerate(heads):
+        if h.group(1) in names:
+            end = heads[i + 1].start() if i + 1 < len(heads) else len(log)
+            parts.append(log[h.start():end].split("\n=====", 1)[0].rstrip())
+    summary = log[log.find("short test summary info"):] if "short test summary info" in log else ""
+    if summary:
+        summary = "=" * 10 + " " + summary.strip()
+    text = "\n\n".join(parts + ([summary] if summary else [])) if parts else log.strip()
+    if len(text) > FAIL_LOG_CHARS:
+        text = text[:FAIL_LOG_CHARS] + "\n[... truncated]"
+    return text
+
+
+def verify(task, image, repeats, timeout, before_repeats=2):
     tid = task["instance_id"]
     tests = changed_test_files(task["test_patch"])
     if not tests:
@@ -77,7 +110,7 @@ def verify(task, image, repeats, timeout):
         (tdir / "fix.patch").write_text(task["patch"])
         (tdir / "test_files.txt").write_text(" ".join(tests))
         cmd = ["docker", "run", "--rm", "--network", "bridge",
-               "-e", f"REPEATS={repeats}",
+               "-e", f"REPEATS={repeats}", "-e", f"BEFORE_REPEATS={before_repeats}",
                "-v", f"{work}:/work", "-v", f"{tdir}:/task:ro",
                "-v", f"{SCRIPT}:/run.sh:ro", "-v", f"{PIP_CACHE}:/root/.cache/pip",
                image, "bash", "/run.sh"]
@@ -90,13 +123,15 @@ def verify(task, image, repeats, timeout):
         reason = re.search(r"SETUP_FAILED (\S+)", out).group(1)
         return {"instance_id": tid, "status": f"setup_failed:{reason}", "tail": out[-600:]}
 
-    before = parse(out, "before")
+    befores = [parse(out, f"before{i}") for i in range(1, before_repeats + 1)]
     afters = [parse(out, f"after{i}") for i in range(1, repeats + 1)]
-    if before is None or any(a is None for a in afters) or not afters[0]:
+    if any(b is None for b in befores) or any(a is None for a in afters) or not afters[0]:
         return {"instance_id": tid, "status": "no_results", "tail": out[-600:]}
+    if any(b != befores[0] for b in befores[1:]):
+        return {"instance_id": tid, "status": "flaky_before"}
     if any(a != afters[0] for a in afters[1:]):
         return {"instance_id": tid, "status": "flaky"}
-    after = afters[0]
+    before, after = befores[0], afters[0]
     # Tests that fail before (or don't exist / error) and pass after.
     f2p = sorted(t for t, s in after.items() if s == "PASSED" and before.get(t) != "PASSED")
     p2p = sorted(t for t, s in after.items() if s == "PASSED" and before.get(t) == "PASSED")
@@ -108,7 +143,8 @@ def verify(task, image, repeats, timeout):
         return {"instance_id": tid, "status": "fix_breaks_tests", "broke": broke[:5]}
     if still_failing:
         return {"instance_id": tid, "status": "tests_fail_after_fix", "failing": still_failing[:5]}
-    return {"instance_id": tid, "status": "verified", "FAIL_TO_PASS": f2p, "PASS_TO_PASS": p2p}
+    return {"instance_id": tid, "status": "verified", "FAIL_TO_PASS": f2p, "PASS_TO_PASS": p2p,
+            "fail_log": extract_fail_log(out, f2p)}
 
 
 if __name__ == "__main__":
@@ -116,7 +152,8 @@ if __name__ == "__main__":
     ap.add_argument("--tasks", default=str(TASK_DIR / "candidates.jsonl"))
     ap.add_argument("--out", default=str(TASK_DIR / "verified.jsonl"))
     ap.add_argument("--image", default="python:3.12-slim-git")
-    ap.add_argument("--repeats", type=int, default=2)
+    ap.add_argument("--repeats", type=int, default=3, help="post-fix runs; all must agree")
+    ap.add_argument("--before-repeats", type=int, default=2, help="pre-fix runs; all must agree")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--timeout", type=int, default=1500)
     ap.add_argument("--limit", type=int)
@@ -145,7 +182,7 @@ if __name__ == "__main__":
     lock = threading.Lock()
 
     def run(t):
-        r = verify(t, a.image, a.repeats, a.timeout)
+        r = verify(t, a.image, a.repeats, a.timeout, a.before_repeats)
         with lock:
             done[t["instance_id"]] = r
             with open(log_path, "a") as f:
@@ -159,7 +196,8 @@ if __name__ == "__main__":
     verified = []
     for tid, r in done.items():
         if r["status"] == "verified" and tid in by_id:
-            verified.append({**by_id[tid], "FAIL_TO_PASS": r["FAIL_TO_PASS"], "PASS_TO_PASS": r["PASS_TO_PASS"]})
+            verified.append({**by_id[tid], "FAIL_TO_PASS": r["FAIL_TO_PASS"], "PASS_TO_PASS": r["PASS_TO_PASS"],
+                             "fail_log": r.get("fail_log", "")})
     write_jsonl(a.out, verified)
     counts = {}
     for r in done.values():
