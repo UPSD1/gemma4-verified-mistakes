@@ -25,11 +25,19 @@ echo "Read $WS/comp/HARNESS_README.md before running the harness."
 : "${MODEL:?set MODEL to the Gemma 4 checkpoint path or id}"
 TP=${TP:-$(nvidia-smi -L | wc -l)}
 
-# 4. Serve. Thinking on + gemma4 tool-call parser; LoRA enabled so we can evaluate adapters.
+# 4. Serve with the same settings as the scoring harness (HARNESS_README section 3.1):
+#    gemma4 tool-call and reasoning parsers, 32k context, LoRA up to rank 128.
+#    The 12B QAT checkpoint needs an architecture override.
+SERVED=${SERVED:-gemma-4-12b-it-qat-w4a16-ct}
+EXTRA=()
+case "$SERVED" in
+  *12b*) EXTRA+=(--hf-overrides '{"architectures": ["Gemma4ForCausalLM"], "model_type": "gemma4"}') ;;
+esac
 nohup python -m vllm.entrypoints.openai.api_server \
-  --model "$MODEL" --served-model-name gemma \
-  --tensor-parallel-size "$TP" --max-model-len 32768 \
-  --enable-auto-tool-choice --tool-call-parser gemma4 \
-  --enable-prefix-caching --enable-lora --max-lora-rank 64 \
+  --model "$MODEL" --served-model-name "$SERVED" \
+  --tensor-parallel-size "$TP" --max-model-len 32768 --gpu-memory-utilization 0.90 \
+  --enable-auto-tool-choice --tool-call-parser gemma4 --reasoning-parser gemma4 \
+  --enable-prefix-caching --enable-lora --max-lora-rank 128 \
+  "${EXTRA[@]}" \
   --port 8000 > "$WS/vllm.log" 2>&1 &
 echo "vLLM starting (log: $WS/vllm.log). Check: curl localhost:8000/v1/models"
