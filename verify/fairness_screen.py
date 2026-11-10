@@ -13,14 +13,29 @@ sliced by them. --filter drops flagged tasks instead. With --ratings N > 1 the w
             (exact message, new function name), 3 = tests check something unrelated
 
 The rater sees what the agent sees (problem_statement, after verify/log_statements.py),
-plus the tests and the gold fix. Any OpenAI-compatible endpoint works (vLLM on RunPod,
-OpenRouter, ...); set RATER_BASE_URL, RATER_MODEL and RATER_API_KEY (in .env).
+plus the tests and the gold fix. Any OpenAI-compatible endpoint works (Anthropic, OpenAI,
+vLLM on RunPod, OpenRouter). Each rater is a prefix of settings in .env, picked with
+--rater (default RATER):
+
+  <P>_BASE_URL  <P>_MODEL                   endpoint, model id
+  key: ANTHROPIC_API_KEY for api.anthropic.com, OPENAI_API_KEY for api.openai.com,
+       otherwise <P>_API_KEY (e.g. vLLM or OpenRouter)
+  <P>_PRICE_IN  <P>_PRICE_OUT  <P>_MAX_COST  USD per 1M tokens and spend cap (optional)
+  <P>_REASONING_EFFORT                       set for reasoning models (low|medium|high);
+                                             sends max_completion_tokens and no temperature
+
+Outputs are named per rater, so several raters can rate the same file and be compared
+with verify/fairness_compare.py.
+
+Competition data is never sent to outside APIs: tasks whose instance_id is in
+data/comp/public_task_ids.txt are skipped (the 129 public tasks). Rate test sets that are
+public GitHub content (OOD-45, the gRPC slice); verify/build_screen_set.py combines them.
 
     python3 verify/fairness_screen.py --in data/tasks/grpc/verified.jsonl --dry-run
     python3 verify/fairness_screen.py --in data/tasks/grpc/verified.jsonl
     python3 verify/fairness_screen.py --in data/ood45.jsonl --out data/ood45.rated.jsonl
-    # Opus 5.5 ($4 in / $20 out per M tokens) with a $5 cap: stops starting new tasks at $5
-    python3 verify/fairness_screen.py --in X.jsonl --price-in 4 --price-out 20 --max-cost 5
+    python3 verify/fairness_screen.py --in data/tasks/screen/test_sets.jsonl --rater OPUS
+    python3 verify/fairness_screen.py --in data/tasks/screen/test_sets.jsonl --rater SOL
 """
 import argparse
 import json
@@ -34,7 +49,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "mining"))
-from common import read_jsonl, write_jsonl  # noqa: E402
+from common import ROOT, read_jsonl, write_jsonl  # noqa: E402
+
+PUBLIC_IDS = ROOT / "data" / "comp" / "public_task_ids.txt"
 
 MAX_CHARS = {"problem_statement": 6000, "test_patch": 8000, "patch": 6000}
 
@@ -94,25 +111,32 @@ def parse_rating(text):
     return None
 
 
-def chat(base_url, model, api_key, prompt, temperature, timeout=180):
-    body = json.dumps({"model": model, "temperature": temperature, "max_tokens": 400,
-                       "messages": [{"role": "user", "content": prompt}]}).encode()
+def chat(base_url, model, api_key, prompt, temperature, max_tokens=400, reasoning_effort=None, timeout=300):
+    body = {"model": model, "messages": [{"role": "user", "content": prompt}]}
+    if reasoning_effort:  # reasoning models: thinking counts toward the limit, temperature is fixed
+        body.update(reasoning_effort=reasoning_effort, max_completion_tokens=max_tokens)
+    else:
+        body.update(temperature=temperature, max_tokens=max_tokens)
+    body = json.dumps(body).encode()
     req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions", data=body, headers={
         "Content-Type": "application/json", "Authorization": f"Bearer {api_key}"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.load(resp)
     usage = data.get("usage") or {}
-    return data["choices"][0]["message"]["content"], usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+    text = data["choices"][0]["message"].get("content") or ""
+    return text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
 
 
-def screen(task, ask, ratings, threshold):
+def screen(task, ask, ratings, threshold, on_error=None):
     """ask(prompt) -> reply text. Collects `ratings` valid ratings (up to 2 extra tries)."""
     prompt, got, errors = build_prompt(task), [], 0
     while len(got) < ratings and errors < ratings + 2:
         try:
             r = parse_rating(ask(prompt))
-        except Exception:  # network or server error: count it and retry
+        except Exception as e:  # network or server error: count it and retry
             r = None
+            if on_error:
+                on_error(e)
         if r:
             got.append(r)
         else:
@@ -130,51 +154,89 @@ def screen(task, ask, ratings, threshold):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp", required=True, help="tasks.jsonl to rate (test sets, gRPC slice)")
-    ap.add_argument("--out", help="default: <in>.rated.jsonl")
-    ap.add_argument("--log", help="default: <in>.fairness_log.jsonl (resumable)")
+    ap.add_argument("--rater", required=True, help="prefix of this rater's settings in .env: OPUS or SOL")
+    ap.add_argument("--out", help="default: <in>.<rater>.rated.jsonl")
+    ap.add_argument("--log", help="default: <in>.<rater>.fairness_log.jsonl (resumable)")
     ap.add_argument("--ratings", type=int, default=1, help="ratings per task; the worst counts")
     ap.add_argument("--threshold", type=int, default=2, help="flag if either score >= this")
     ap.add_argument("--filter", action="store_true", help="drop flagged tasks instead of only reporting")
-    ap.add_argument("--temperature", type=float, default=0.7)
+    ap.add_argument("--temperature", type=float, default=0.0, help="ignored for reasoning models")
+    ap.add_argument("--max-tokens", type=int, help="reply limit; default 400, or 4000 for reasoning models")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--limit", type=int)
-    ap.add_argument("--price-in", type=float, default=0.0, help="USD per 1M input tokens, for the cost cap")
-    ap.add_argument("--price-out", type=float, default=0.0, help="USD per 1M output tokens")
-    ap.add_argument("--max-cost", type=float, help="stop starting new tasks once spend reaches this (USD)")
+    ap.add_argument("--price-in", type=float, help="USD per 1M input tokens (default <P>_PRICE_IN)")
+    ap.add_argument("--price-out", type=float, help="USD per 1M output tokens (default <P>_PRICE_OUT)")
+    ap.add_argument("--max-cost", type=float, help="stop starting new tasks at this spend, USD (default <P>_MAX_COST)")
     ap.add_argument("--dry-run", action="store_true", help="print the first prompt and exit")
     a = ap.parse_args()
 
-    stem = str(Path(a.inp).with_suffix(""))
+    P = a.rater.upper()
+    env = lambda k: os.environ.get(f"{P}_{k}") or None  # noqa: E731
+    num = lambda v: float(v) if v else None  # noqa: E731
+    a.price_in = a.price_in if a.price_in is not None else num(env("PRICE_IN")) or 0.0
+    a.price_out = a.price_out if a.price_out is not None else num(env("PRICE_OUT")) or 0.0
+    a.max_cost = a.max_cost if a.max_cost is not None else num(env("MAX_COST"))
+    effort = env("REASONING_EFFORT")
+    a.max_tokens = a.max_tokens or (4000 if effort else 400)
+    stem = str(Path(a.inp).with_suffix("")) + "." + P.lower()
     a.out, a.log = a.out or stem + ".rated.jsonl", a.log or stem + ".fairness_log.jsonl"
-    tasks = read_jsonl(a.inp)[: a.limit] if a.limit else read_jsonl(a.inp)
+    tasks = read_jsonl(a.inp)
+    if PUBLIC_IDS.exists():
+        public = set(PUBLIC_IDS.read_text().split())
+        n = len(tasks)
+        tasks = [t for t in tasks if t["instance_id"] not in public]
+        if len(tasks) < n:
+            print(f"skipped {n - len(tasks)} competition public tasks (not sent to outside APIs)")
+    else:
+        print(f"WARNING: {PUBLIC_IDS} missing; cannot check for competition tasks")
+    tasks = tasks[: a.limit] if a.limit else tasks
     if a.dry_run:
         print(build_prompt(tasks[0]))
         sys.exit(0)
-    base_url, model, key = (os.environ.get(k) for k in ("RATER_BASE_URL", "RATER_MODEL", "RATER_API_KEY"))
+    base_url, model = env("BASE_URL"), env("MODEL")
+    key_var = ("ANTHROPIC_API_KEY" if "anthropic.com" in base_url else
+               "OPENAI_API_KEY" if "openai.com" in base_url else f"{P}_API_KEY") if base_url else ""
+    key = os.environ.get(key_var)
     if not base_url or not model:
-        sys.exit("Set RATER_BASE_URL and RATER_MODEL (and RATER_API_KEY) in .env, then: set -a; source .env; set +a")
+        sys.exit(f"Set {P}_BASE_URL and {P}_MODEL in .env, then: set -a; source .env; set +a")
+    if not key and "127.0.0.1" not in base_url and "localhost" not in base_url:
+        sys.exit(f"{key_var} is empty: put the key in .env, then: set -a; source .env; set +a")
 
     log_path = Path(a.log)
     done = {r["instance_id"]: r for r in read_jsonl(log_path) if r["status"] != "rater_failed"} \
         if log_path.exists() else {}
     todo = [t for t in tasks if t["instance_id"] not in done]
     est_in = sum(len(build_prompt(t)) for t in todo) / 3.5 * a.ratings
-    est = (est_in * a.price_in + len(todo) * a.ratings * 150 * a.price_out) / 1e6
+    est_out = 150 + (1500 if effort else 0)  # reasoning models think before answering
+    est = (est_in * a.price_in + len(todo) * a.ratings * est_out * a.price_out) / 1e6
     print(f"{len(tasks)} tasks, {len(todo)} to rate ({len(done)} already rated) with {model}; "
           f"estimated cost ${est:.2f}" + (f", cap ${a.max_cost:.2f}" if a.max_cost else ""))
     lock = threading.Lock()
-    spent = [0.0]
+    spent, errors_seen, successes = [0.0], [], [0]
+
+    def on_error(e):
+        with lock:
+            if len(errors_seen) < 3:  # show the first few so a bad key or model id is obvious
+                detail = e.read().decode(errors="replace")[:300] if hasattr(e, "read") else ""
+                print(f"  rater error: {e} {detail}", flush=True)
+            errors_seen.append(e)
 
     def ask(prompt):
-        text, tin, tout = chat(base_url, model, key or "none", prompt, a.temperature)
+        text, tin, tout = chat(base_url, model, key or "none", prompt, a.temperature, a.max_tokens, effort)
         with lock:
+            successes[0] += 1
             spent[0] += (tin * a.price_in + tout * a.price_out) / 1e6
         return text
 
     def run(t):
         if a.max_cost and spent[0] >= a.max_cost:
             return  # over budget: left unrated, so a later run resumes here
-        r = screen(t, ask, a.ratings, a.threshold)
+        if len(errors_seen) >= 10 and not successes[0]:
+            return  # every call so far failed (bad key, model id or URL): stop instead of retrying all
+        r = screen(t, ask, a.ratings, a.threshold, on_error)
+        r["rater"] = model
+        if r["status"] == "rater_failed":
+            return  # not logged, so a rerun retries it
         with lock:
             done[t["instance_id"]] = r
             with open(log_path, "a") as f:
@@ -183,6 +245,8 @@ if __name__ == "__main__":
 
     with ThreadPoolExecutor(a.workers) as pool:
         list(pool.map(run, todo))
+    if len(errors_seen) >= 10 and not successes[0]:
+        sys.exit("stopped: the first 10 calls all failed; fix the error above and rerun")
     print(f"spent ${spent[0]:.2f}" + (f" of ${a.max_cost:.2f} cap" if a.max_cost else "")
           + (" (cap reached; rerun later to finish)" if a.max_cost and spent[0] >= a.max_cost else ""))
 
@@ -193,6 +257,7 @@ if __name__ == "__main__":
             continue
         fair = {k: r[k] for k in ("clarity", "test_fit") if k in r}
         fair["reasons"] = [x["reason"] for x in r.get("ratings", [])]
+        fair["rater"] = r.get("rater", model)
         kept.append({**t, "meta": {**t.get("meta", {}), "fairness": fair,
                                    "fairness_flag": r["status"] != "ok"}})
     write_jsonl(a.out, kept)
