@@ -17,6 +17,17 @@ REPOS = {
     "encode/httpx": "httpx",
 }
 
+# gRPC slice: evaluation only, never training (Problem areas tab). Pure-Python libraries
+# built on gRPC whose repo root installs with pip; grpc/grpc itself needs a C++ build.
+GRPC_REPOS = {
+    "googleapis/python-api-core": "api_core",
+    "vmagamedov/grpclib": "grpclib",
+    "d5h-foss/grpc-interceptor": "grpc_interceptor",
+    "python-trio/purerpc": "purerpc",
+}
+GRPC_RAW_DIR = RAW_DIR / "grpc"
+GRPC_TASK_DIR = TASK_DIR / "grpc"
+
 TEST_RE = re.compile(r"(^|/)(tests?|testing)/|(^|/)test_[^/]*\.py$|_test\.py$|(^|/)conftest\.py$")
 # Paths that are never the "fix": docs, doc examples, CI, scripts.
 NON_CODE_RE = re.compile(r"^(docs|docs_src|doc|scripts|\.github|benchmarks?|examples?)/")

@@ -1,8 +1,10 @@
 """Stage 5: fairness screen, adapted from SWE-bench Verified.
 
-Drops tasks an agent can't reasonably solve from what it is shown. Each task is rated
-3 times by an LLM on two 0-3 scales; the worst (highest) of the 3 ratings counts, and a
-task is dropped if either scale reaches 2.
+Rates whether an agent can reasonably solve each task from what it is shown, on two 0-3
+scales. Used as a REPORT, not a filter: every task is kept, with its ratings in
+meta.fairness and meta.fairness_flag (either score >= --threshold), so results can be
+sliced by them. --filter drops flagged tasks instead. With --ratings N > 1 the worst
+(highest) rating counts.
 
   clarity   0 = clear what to fix, 1 = some blanks but a sensible reading exists,
             2 = vague, several readings, 3 = impossible to know what is asked
@@ -14,8 +16,9 @@ The rater sees what the agent sees (problem_statement, after verify/log_statemen
 plus the tests and the gold fix. Any OpenAI-compatible endpoint works (vLLM on RunPod,
 OpenRouter, ...); set RATER_BASE_URL, RATER_MODEL and RATER_API_KEY (in .env).
 
-    python3 verify/fairness_screen.py --dry-run          # print one prompt, call nothing
-    python3 verify/fairness_screen.py --workers 8
+    python3 verify/fairness_screen.py --in data/tasks/grpc/verified.jsonl --dry-run
+    python3 verify/fairness_screen.py --in data/tasks/grpc/verified.jsonl
+    python3 verify/fairness_screen.py --in data/ood45.jsonl --out data/ood45.rated.jsonl
 """
 import argparse
 import json
@@ -29,7 +32,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "mining"))
-from common import TASK_DIR, read_jsonl, write_jsonl  # noqa: E402
+from common import read_jsonl, write_jsonl  # noqa: E402
 
 MAX_CHARS = {"problem_statement": 6000, "test_patch": 8000, "patch": 6000}
 
@@ -116,23 +119,26 @@ def screen(task, ask, ratings, threshold):
         return row
     row["clarity"] = max(r["clarity"] for r in got)
     row["test_fit"] = max(r["test_fit"] for r in got)
-    row["status"] = "keep" if row["clarity"] < threshold and row["test_fit"] < threshold else "drop"
+    row["status"] = "ok" if row["clarity"] < threshold and row["test_fit"] < threshold else "flagged"
     return row
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--in", dest="inp", default=str(TASK_DIR / "train_tasks.jsonl"))
-    ap.add_argument("--out", default=str(TASK_DIR / "screened_tasks.jsonl"))
-    ap.add_argument("--log", default=str(TASK_DIR / "fairness_log.jsonl"))
-    ap.add_argument("--ratings", type=int, default=3, help="ratings per task; the worst counts")
-    ap.add_argument("--threshold", type=int, default=2, help="drop if either score >= this")
+    ap.add_argument("--in", dest="inp", required=True, help="tasks.jsonl to rate (test sets, gRPC slice)")
+    ap.add_argument("--out", help="default: <in>.rated.jsonl")
+    ap.add_argument("--log", help="default: <in>.fairness_log.jsonl (resumable)")
+    ap.add_argument("--ratings", type=int, default=1, help="ratings per task; the worst counts")
+    ap.add_argument("--threshold", type=int, default=2, help="flag if either score >= this")
+    ap.add_argument("--filter", action="store_true", help="drop flagged tasks instead of only reporting")
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--limit", type=int)
     ap.add_argument("--dry-run", action="store_true", help="print the first prompt and exit")
     a = ap.parse_args()
 
+    stem = str(Path(a.inp).with_suffix(""))
+    a.out, a.log = a.out or stem + ".rated.jsonl", a.log or stem + ".fairness_log.jsonl"
     tasks = read_jsonl(a.inp)[: a.limit] if a.limit else read_jsonl(a.inp)
     if a.dry_run:
         print(build_prompt(tasks[0]))
@@ -161,13 +167,16 @@ if __name__ == "__main__":
 
     kept = []
     for t in tasks:
-        r = done.get(t["instance_id"])
-        if r and r["status"] == "keep":
-            kept.append({**t, "meta": {**t.get("meta", {}), "fairness": {
-                "clarity": r["clarity"], "test_fit": r["test_fit"]}}})
+        r = done.get(t["instance_id"], {"status": "rater_failed"})
+        if a.filter and r["status"] != "ok":
+            continue
+        fair = {k: r[k] for k in ("clarity", "test_fit") if k in r}
+        fair["reasons"] = [x["reason"] for x in r.get("ratings", [])]
+        kept.append({**t, "meta": {**t.get("meta", {}), "fairness": fair,
+                                   "fairness_flag": r["status"] != "ok"}})
     write_jsonl(a.out, kept)
     by_source = Counter(("test_log" if t.get("meta", {}).get("problem_source") == "test_log" else "issue",
                          done.get(t["instance_id"], {}).get("status", "unrated")) for t in tasks)
-    print(f"kept {len(kept)} of {len(tasks)} -> {a.out}")
+    print(f"{'kept' if a.filter else 'wrote'} {len(kept)} of {len(tasks)} -> {a.out}")
     print("status:", dict(Counter(r["status"] for r in done.values())))
     print("by bug-report source:", {f"{s}/{st}": n for (s, st), n in sorted(by_source.items())})

@@ -5,11 +5,12 @@ and unit tests; drop docs-only, test-only and very large changes.
 
     python3 mining/mine_prs.py --repo psf/requests --limit 200
     python3 mining/mine_prs.py --all
+    python3 mining/mine_prs.py --all --set grpc     # gRPC evaluation slice -> data/raw/grpc/
 """
 import argparse
 import re
 
-from common import REPOS, RAW_DIR, gh_graphql, is_code_file, is_test_file, write_jsonl
+from common import GRPC_RAW_DIR, GRPC_REPOS, REPOS, RAW_DIR, gh_graphql, is_code_file, is_test_file, write_jsonl
 
 QUERY = """
 query($owner: String!, $name: String!, $cursor: String) {
@@ -78,9 +79,9 @@ def to_candidate(repo, short, pr):
     }
 
 
-def mine(repo, limit=None):
+def mine(repo, limit=None, out_dir=RAW_DIR):
     owner, name = repo.split("/")
-    short = REPOS[repo]
+    short = {**REPOS, **GRPC_REPOS}[repo]
     cursor, seen, kept, drops = None, 0, [], {}
     while True:
         data = gh_graphql(QUERY, owner=owner, name=name, cursor=cursor)
@@ -98,7 +99,8 @@ def mine(repo, limit=None):
         if (limit and seen >= limit) or not page["pageInfo"]["hasNextPage"]:
             break
         cursor = page["pageInfo"]["endCursor"]
-    out = RAW_DIR / f"{short}_candidates.jsonl"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{short}_candidates.jsonl"
     write_jsonl(out, kept)
     print(f"{repo}: {seen} merged PRs scanned, {len(kept)} kept -> {out}")
     print(f"  dropped: {drops}")
@@ -109,12 +111,15 @@ def mine(repo, limit=None):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--repo", choices=list(REPOS))
+    ap.add_argument("--repo", choices=list(REPOS) + list(GRPC_REPOS))
+    ap.add_argument("--set", choices=["train", "grpc"], default="train",
+                    help="train: the 4 competition repos -> data/raw; grpc: evaluation slice -> data/raw/grpc")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--limit", type=int, help="max merged PRs to scan per repo")
     a = ap.parse_args()
-    repos = list(REPOS) if a.all else [a.repo]
+    pool, out_dir = (GRPC_REPOS, GRPC_RAW_DIR) if a.set == "grpc" else (REPOS, RAW_DIR)
+    repos = list(pool) if a.all else [a.repo]
     if repos == [None]:
         ap.error("pass --repo or --all")
     for r in repos:
-        mine(r, a.limit)
+        mine(r, a.limit, GRPC_RAW_DIR if r in GRPC_REPOS else out_dir)

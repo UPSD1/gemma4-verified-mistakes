@@ -7,10 +7,12 @@ problem_statement, hints_text, patch, test_patch, created_at) plus our own metad
     python3 mining/build_tasks.py --exclude data/public_tasks.jsonl
     python3 mining/build_tasks.py --exclude data/public_tasks.jsonl --exclude data/freshswe.jsonl \\
         --exclude-repos-from data/ood45.jsonl
+    python3 mining/build_tasks.py --raw-dir data/raw/grpc --out data/tasks/grpc/candidates.jsonl
 """
 import argparse
 import re
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from common import RAW_DIR, ROOT, TASK_DIR, gh, is_test_file, read_jsonl, write_jsonl
 
@@ -97,6 +99,7 @@ if __name__ == "__main__":
     ap.add_argument("--exclude-repos-from", action="append",
                     help="tasks.jsonl whose repos are dropped entirely (repeatable): OOD-45")
     ap.add_argument("--out", default=str(TASK_DIR / "candidates.jsonl"))
+    ap.add_argument("--raw-dir", default=str(RAW_DIR), help="folder of *_candidates.jsonl from mine_prs.py")
     ap.add_argument("--workers", type=int, default=6)
     a = ap.parse_args()
     excl_ids, excl_commits = load_excludes(a.exclude)
@@ -107,7 +110,7 @@ if __name__ == "__main__":
         print("WARNING: no --exclude-repos-from file; test-set repo overlap NOT checked yet")
     elif excl_repos:
         print(f"excluding {len(excl_repos)} test-set repos")
-    cands = [c for p in sorted(RAW_DIR.glob("*_candidates.jsonl")) for c in read_jsonl(p)]
+    cands = [c for p in sorted(Path(a.raw_dir).glob("*_candidates.jsonl")) for c in read_jsonl(p)]
     with ThreadPoolExecutor(a.workers) as pool:
         results = list(pool.map(lambda c: build(c, excl_ids, excl_commits, excl_repos), cands))
     rows = [r for r, _ in results if r]
