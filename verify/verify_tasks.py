@@ -160,6 +160,8 @@ if __name__ == "__main__":
     ap.add_argument("--only", help="comma-separated instance_ids")
     ap.add_argument("--since", help="only tasks created on/after this date, e.g. 2021-01-01 "
                     "(older commits rarely install on modern Python)")
+    ap.add_argument("--shard", help="K/N: verify only every N-th task starting at K (0-based), "
+                    "to split one run across machines; merge with verify/merge_logs.py")
     a = ap.parse_args()
 
     PIP_CACHE.mkdir(parents=True, exist_ok=True)
@@ -172,6 +174,10 @@ if __name__ == "__main__":
     # Fixed-seed shuffle so partial runs are balanced across repos.
     import random
     random.Random(0).shuffle(tasks)
+    if a.shard:
+        k, n = map(int, a.shard.split("/"))
+        tasks = tasks[k::n]
+        print(f"shard {k}/{n}")
     if a.limit:
         tasks = tasks[: a.limit]
     log_path = Path(a.out).parent / "verify_log.jsonl"
