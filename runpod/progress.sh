@@ -4,21 +4,19 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 set -a; source "$ROOT/.env"; set +a
 O=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
 
-echo "=== Main pod ($RUNPOD_SSH_HOST:$RUNPOD_SSH_PORT): resampling for arms (b)-(d)"
+echo "=== Main pod ($RUNPOD_SSH_HOST:$RUNPOD_SSH_PORT): arm training"
 ssh "${O[@]}" -p "$RUNPOD_SSH_PORT" -i "$RUNPOD_SSH_KEY" "$RUNPOD_SSH_USER@$RUNPOD_SSH_HOST" '
   echo "time (UTC): $(date -u +%H:%M)"
-  curl -s -m 5 localhost:8000/v1/models | grep -q gemma && echo "vLLM: up" || echo "vLLM: DOWN"
-  [ -f /workspace/logs/t3.log ] && echo "-- resample test (T3): $(grep -cE "replayed" /workspace/logs/t3.log) replayed, $(grep -q T3_DONE /workspace/logs/t3.log && echo done || echo running), $(grep -c "\"resolved\": true" /workspace/results/t3/task_results.jsonl 2>/dev/null || true) recovered"
-  for B in resample_v2/fresh resample_v2/mined; do
-    [ -d /workspace/results/$B ] || continue
-    echo "-- $B: $(grep -E "^start|DONE" /workspace/logs/resample_v2.log 2>/dev/null | tr "\n" " ")"
-    for d in /workspace/results/$B/s*_p*/; do
-      [ -d "$d" ] || continue
-      n=$(cat $d/task_results.jsonl 2>/dev/null | wc -l); b=$(wc -l < $d/branches.jsonl 2>/dev/null || echo "?")
-      r=$(grep -c "\"resolved\": true" $d/task_results.jsonl 2>/dev/null || true)
-      echo "   $(basename $d): $n/$b continuations graded, $r recovered"
-    done
-  done' 2>/dev/null || echo "   (main pod not reachable)"
+  curl -s -m 5 localhost:8000/v1/models | grep -q gemma && echo "vLLM: up" || echo "vLLM: down"
+  for L in /workspace/logs/train_arm_*.log; do
+    [ -f "$L" ] || continue
+    case "$L" in *stopped*|*precleanup*) continue;; esac
+    echo "-- $(basename $L .log): $(grep -E "examples," $L | tail -1)"
+    grep -E "^step" $L | tail -1 | sed "s/^/   last: /"
+    grep -qE "TRAIN_DONE" $L && echo "   DONE -> $(grep -E "adapter ->" $L | tail -1)"
+    grep -E "Traceback|out of memory|Error" $L | tail -2 | sed "s/^/   ERROR: /"
+  done
+  nvidia-smi --query-gpu=memory.used,utilization.gpu --format=csv,noheader | sed "s/^/   GPU: /"' 2>/dev/null || echo "   (main pod not reachable)"
 
 echo
 echo "=== Training pod (${TRAIN_SSH_HOST:-?}:${TRAIN_SSH_PORT:-?}): arm training"
