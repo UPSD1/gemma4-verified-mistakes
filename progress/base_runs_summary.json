@@ -1,0 +1,579 @@
+{
+ "freshswe": {
+  "per_pass": {
+   "r1": {
+    "n": 200,
+    "resolved": 60,
+    "rate": 0.3,
+    "outcomes": {
+     "timeout": 129,
+     "resolved": 60,
+     "empty_patch": 10,
+     "error": 1
+    },
+    "median_min": 15.7
+   },
+   "r2": {
+    "n": 200,
+    "resolved": 55,
+    "rate": 0.275,
+    "outcomes": {
+     "empty_patch": 14,
+     "resolved": 55,
+     "timeout": 131
+    },
+    "median_min": 15.6
+   },
+   "r3": {
+    "n": 200,
+    "resolved": 57,
+    "rate": 0.285,
+    "outcomes": {
+     "timeout": 128,
+     "resolved": 57,
+     "empty_patch": 14,
+     "error": 1
+    },
+    "median_min": 15.5
+   },
+   "r4": {
+    "n": 200,
+    "resolved": 56,
+    "rate": 0.28,
+    "outcomes": {
+     "timeout": 129,
+     "resolved": 56,
+     "empty_patch": 12,
+     "error": 3
+    },
+    "median_min": 15.7
+   }
+  },
+  "tasks_with_all_passes": 200,
+  "pass_at_k": {
+   "pass@1": 0.285,
+   "pass@2": 0.338,
+   "pass@3": 0.366,
+   "pass@4": 0.385
+  },
+  "solved_in_k_of_n": {
+   "0": 123,
+   "1": 15,
+   "2": 11,
+   "3": 13,
+   "4": 38
+  },
+  "mixed_tasks": 39,
+  "never_solved": 123,
+  "always_solved": 38,
+  "by_repo": {
+   "Delgan/loguru": {
+    "resolved": 12,
+    "runs": 32,
+    "rate": 0.375
+   },
+   "Kludex/python-multipart": {
+    "resolved": 12,
+    "runs": 12,
+    "rate": 1.0
+   },
+   "PyCQA/isort": {
+    "resolved": 0,
+    "runs": 32,
+    "rate": 0.0
+   },
+   "Python-Markdown/markdown": {
+    "resolved": 3,
+    "runs": 20,
+    "rate": 0.15
+   },
+   "Textualize/textual": {
+    "resolved": 0,
+    "runs": 8,
+    "rate": 0.0
+   },
+   "encode/uvicorn": {
+    "resolved": 4,
+    "runs": 32,
+    "rate": 0.125
+   },
+   "executablebooks/markdown-it-py": {
+    "resolved": 9,
+    "runs": 20,
+    "rate": 0.45
+   },
+   "fastapi/sqlmodel": {
+    "resolved": 0,
+    "runs": 16,
+    "rate": 0.0
+   },
+   "fastapi/typer": {
+    "resolved": 3,
+    "runs": 32,
+    "rate": 0.094
+   },
+   "hynek/structlog": {
+    "resolved": 6,
+    "runs": 12,
+    "rate": 0.5
+   },
+   "jd/tenacity": {
+    "resolved": 19,
+    "runs": 32,
+    "rate": 0.594
+   },
+   "litestar-org/litestar": {
+    "resolved": 2,
+    "runs": 32,
+    "rate": 0.062
+   },
+   "marshmallow-code/marshmallow": {
+    "resolved": 8,
+    "runs": 20,
+    "rate": 0.4
+   },
+   "more-itertools/more-itertools": {
+    "resolved": 16,
+    "runs": 32,
+    "rate": 0.5
+   },
+   "pallets/click": {
+    "resolved": 2,
+    "runs": 32,
+    "rate": 0.062
+   },
+   "pallets/flask": {
+    "resolved": 0,
+    "runs": 8,
+    "rate": 0.0
+   },
+   "pallets/werkzeug": {
+    "resolved": 10,
+    "runs": 32,
+    "rate": 0.312
+   },
+   "psf/black": {
+    "resolved": 0,
+    "runs": 32,
+    "rate": 0.0
+   },
+   "pydantic/pydantic-settings": {
+    "resolved": 8,
+    "runs": 32,
+    "rate": 0.25
+   },
+   "pypa/packaging": {
+    "resolved": 8,
+    "runs": 32,
+    "rate": 0.25
+   },
+   "pytest-dev/pluggy": {
+    "resolved": 17,
+    "runs": 32,
+    "rate": 0.531
+   },
+   "python-attrs/attrs": {
+    "resolved": 1,
+    "runs": 12,
+    "rate": 0.083
+   },
+   "python-attrs/cattrs": {
+    "resolved": 9,
+    "runs": 32,
+    "rate": 0.281
+   },
+   "python-humanize/humanize": {
+    "resolved": 19,
+    "runs": 32,
+    "rate": 0.594
+   },
+   "python-jsonschema/jsonschema": {
+    "resolved": 0,
+    "runs": 12,
+    "rate": 0.0
+   },
+   "python-poetry/poetry-core": {
+    "resolved": 11,
+    "runs": 32,
+    "rate": 0.344
+   },
+   "scrapy/parsel": {
+    "resolved": 4,
+    "runs": 16,
+    "rate": 0.25
+   },
+   "scrapy/w3lib": {
+    "resolved": 12,
+    "runs": 32,
+    "rate": 0.375
+   },
+   "simonw/sqlite-utils": {
+    "resolved": 11,
+    "runs": 32,
+    "rate": 0.344
+   },
+   "strawberry-graphql/strawberry": {
+    "resolved": 7,
+    "runs": 32,
+    "rate": 0.219
+   },
+   "tox-dev/platformdirs": {
+    "resolved": 11,
+    "runs": 32,
+    "rate": 0.344
+   },
+   "tqdm/tqdm": {
+    "resolved": 4,
+    "runs": 4,
+    "rate": 1.0
+   }
+  },
+  "mixed_ids": [
+   "attrs_1571",
+   "cattrs_2c6cf5b9f6",
+   "cattrs_5bf7c97293",
+   "cattrs_a6c0900533",
+   "click_3244",
+   "click_3681",
+   "humanize_334",
+   "humanize_354",
+   "humanize_359",
+   "humanize_392",
+   "litestar_4814",
+   "loguru_1413",
+   "loguru_c71a057f12",
+   "markdown_175fb5aecc",
+   "markdown_it_py_428",
+   "more_itertools_1253",
+   "more_itertools_1279",
+   "packaging_1265",
+   "packaging_1319",
+   "packaging_1320",
+   "packaging_1330",
+   "platformdirs_544",
+   "platformdirs_546",
+   "platformdirs_569",
+   "platformdirs_583",
+   "pluggy_738",
+   "pluggy_752",
+   "poetry_core_971",
+   "sqlite_utils_7d86118168",
+   "sqlite_utils_829",
+   "sqlite_utils_adc10df981",
+   "strawberry_4342",
+   "strawberry_4504",
+   "strawberry_4605",
+   "structlog_811",
+   "tenacity_741",
+   "typer_1820",
+   "werkzeug_3163",
+   "werkzeug_594452f6a4"
+  ],
+  "never_ids": [
+   "attrs_1541",
+   "attrs_1606",
+   "black_5080",
+   "black_5107",
+   "black_5129",
+   "black_5237",
+   "black_5428",
+   "black_5471",
+   "black_5475",
+   "black_5510",
+   "cattrs_0e5898a410",
+   "cattrs_3d57d6b4af",
+   "cattrs_f2e42f3c69",
+   "cattrs_f693a0b35c",
+   "click_3126",
+   "click_3239",
+   "click_3256",
+   "click_3642",
+   "click_3777",
+   "click_3866",
+   "flask_6096",
+   "flask_6133",
+   "humanize_328",
+   "isort_1bde3c5b19",
+   "isort_2563",
+   "isort_2574",
+   "isort_2599",
+   "isort_57f1638c3e",
+   "isort_79b6981d29",
+   "isort_a373b47ee9",
+   "isort_cb179db220",
+   "jsonschema_0a845d0db3",
+   "jsonschema_592f1c1b6e",
+   "jsonschema_865c27fc3d",
+   "litestar_4676",
+   "litestar_4815",
+   "litestar_4839",
+   "litestar_4917",
+   "litestar_4929",
+   "litestar_4982",
+   "litestar_4985",
+   "loguru_1504",
+   "loguru_1508",
+   "loguru_1514",
+   "loguru_1529",
+   "markdown_0bf535bc40",
+   "markdown_1621",
+   "markdown_7a29324e03",
+   "markdown_7c265bc79d",
+   "markdown_it_py_391",
+   "markdown_it_py_425",
+   "marshmallow_2799",
+   "marshmallow_2937",
+   "marshmallow_ec2178c26b",
+   "more_itertools_1116",
+   "more_itertools_1261",
+   "more_itertools_1285",
+   "packaging_1152",
+   "packaging_1249",
+   "packaging_1299",
+   "packaging_1334",
+   "parsel_352",
+   "parsel_357",
+   "parsel_360",
+   "platformdirs_564",
+   "platformdirs_589",
+   "platformdirs_612",
+   "pluggy_632",
+   "pluggy_701",
+   "pluggy_741",
+   "poetry_core_939_6fd731",
+   "poetry_core_939_8dc852",
+   "poetry_core_943",
+   "poetry_core_959",
+   "poetry_core_973",
+   "pydantic_settings_1022",
+   "pydantic_settings_1036",
+   "pydantic_settings_862",
+   "pydantic_settings_878",
+   "pydantic_settings_977",
+   "pydantic_settings_981",
+   "sqlite_utils_0566a9f128",
+   "sqlite_utils_6bc1d33d58",
+   "sqlite_utils_795",
+   "sqlite_utils_b37b8cf8c8",
+   "sqlmodel_1729",
+   "sqlmodel_1731",
+   "sqlmodel_2095",
+   "sqlmodel_2101",
+   "strawberry_4421",
+   "strawberry_4664",
+   "strawberry_4671",
+   "strawberry_4704",
+   "structlog_794",
+   "tenacity_640",
+   "tenacity_653",
+   "tenacity_694",
+   "textual_6544",
+   "textual_6592",
+   "typer_1405",
+   "typer_1410",
+   "typer_1695",
+   "typer_1788",
+   "typer_1791",
+   "typer_1821",
+   "typer_1972",
+   "uvicorn_2905",
+   "uvicorn_2906",
+   "uvicorn_2907",
+   "uvicorn_3025",
+   "uvicorn_3119",
+   "uvicorn_3199",
+   "uvicorn_3200",
+   "w3lib_288",
+   "w3lib_289",
+   "w3lib_297",
+   "w3lib_347",
+   "w3lib_358",
+   "werkzeug_3147",
+   "werkzeug_3166",
+   "werkzeug_3276",
+   "werkzeug_3292",
+   "werkzeug_ef518e429b"
+  ]
+ },
+ "ood45": {
+  "per_pass": {
+   "s1": {
+    "n": 44,
+    "resolved": 33,
+    "rate": 0.75,
+    "outcomes": {
+     "resolved": 33,
+     "empty_patch": 2,
+     "timeout": 8,
+     "context_overflow": 1
+    },
+    "median_min": 15.4
+   },
+   "s2": {
+    "n": 44,
+    "resolved": 31,
+    "rate": 0.705,
+    "outcomes": {
+     "resolved": 31,
+     "timeout": 13
+    },
+    "median_min": 16.2
+   },
+   "s3": {
+    "n": 44,
+    "resolved": 25,
+    "rate": 0.568,
+    "outcomes": {
+     "resolved": 25,
+     "timeout": 18,
+     "empty_patch": 1
+    },
+    "median_min": 15.3
+   }
+  },
+  "tasks_with_all_passes": 44,
+  "pass_at_k": {
+   "pass@1": 0.674,
+   "pass@2": 0.811,
+   "pass@3": 0.841
+  },
+  "solved_in_k_of_n": {
+   "0": 7,
+   "1": 4,
+   "2": 14,
+   "3": 19
+  },
+  "mixed_tasks": 18,
+  "never_solved": 7,
+  "always_solved": 19,
+  "by_repo": {
+   "apache/iceberg-python": {
+    "resolved": 6,
+    "runs": 6,
+    "rate": 1.0
+   },
+   "caronc/apprise": {
+    "resolved": 3,
+    "runs": 3,
+    "rate": 1.0
+   },
+   "feast-dev/feast": {
+    "resolved": 0,
+    "runs": 9,
+    "rate": 0.0
+   },
+   "fsspec/filesystem_spec": {
+    "resolved": 17,
+    "runs": 21,
+    "rate": 0.81
+   },
+   "has2k1/plotnine": {
+    "resolved": 3,
+    "runs": 3,
+    "rate": 1.0
+   },
+   "hgrecco/pint": {
+    "resolved": 3,
+    "runs": 6,
+    "rate": 0.5
+   },
+   "kedro-org/kedro": {
+    "resolved": 7,
+    "runs": 12,
+    "rate": 0.583
+   },
+   "kedro-org/kedro-viz": {
+    "resolved": 3,
+    "runs": 3,
+    "rate": 1.0
+   },
+   "pdm-project/pdm": {
+    "resolved": 2,
+    "runs": 3,
+    "rate": 0.667
+   },
+   "pola-rs/polars": {
+    "resolved": 3,
+    "runs": 3,
+    "rate": 1.0
+   },
+   "posit-dev/great-tables": {
+    "resolved": 24,
+    "runs": 36,
+    "rate": 0.667
+   },
+   "posit-dev/py-shiny": {
+    "resolved": 6,
+    "runs": 6,
+    "rate": 1.0
+   },
+   "pyjanitor-devs/pyjanitor": {
+    "resolved": 6,
+    "runs": 6,
+    "rate": 1.0
+   },
+   "tkem/cachetools": {
+    "resolved": 2,
+    "runs": 3,
+    "rate": 0.667
+   },
+   "tox-dev/tox": {
+    "resolved": 1,
+    "runs": 9,
+    "rate": 0.111
+   },
+   "wntrblm/nox": {
+    "resolved": 3,
+    "runs": 3,
+    "rate": 1.0
+   }
+  },
+  "mixed_ids": [
+   "cachetools_424",
+   "filesystem_spec_2169",
+   "filesystem_spec_2170",
+   "filesystem_spec_2182",
+   "filesystem_spec_2191",
+   "great_tables_865",
+   "great_tables_867",
+   "great_tables_874",
+   "great_tables_893",
+   "great_tables_895",
+   "kedro_5790",
+   "kedro_5791",
+   "kedro_5792",
+   "kedro_5793",
+   "pdm_3902",
+   "pint_2434",
+   "pint_2437",
+   "tox_4109"
+  ],
+  "never_ids": [
+   "feast_6859",
+   "feast_6860",
+   "feast_6874",
+   "great_tables_872",
+   "great_tables_880",
+   "tox_4094",
+   "tox_4097"
+  ],
+  "cuts": {
+   "all": {
+    "resolved": 89,
+    "runs": 132,
+    "rate": 0.674
+   },
+   "no_env_overlay": {
+    "resolved": 60,
+    "runs": 90,
+    "rate": 0.667
+   },
+   "no_hint_or_spec": {
+    "resolved": 72,
+    "runs": 105,
+    "rate": 0.686
+   },
+   "macro_by_repo": 0.75
+  }
+ }
+}
