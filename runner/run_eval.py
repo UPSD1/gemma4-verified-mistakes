@@ -57,6 +57,8 @@ def main():
     ap.add_argument("--ood", help="OOD-45 dataset dir: use its tools/ood45_harness.py (per-repo wheels, "
                                   "subprocess dependency install); --tasks is ignored, pick a repo with --repo")
     ap.add_argument("--repo", help="with --ood: run only this repo (e.g. kedro-org/kedro)")
+    ap.add_argument("--fresh", help="FreshSWE-Py dataset dir: its snapshots, graphs and per-task pinned "
+                                    "environments (runner/freshswe_env.py)")
     ap.add_argument("--skip", default="urllib3_5279", help="comma-separated instance ids to leave out")
     a = ap.parse_args()
 
@@ -74,6 +76,12 @@ def main():
         tmp.write_text("".join(json.dumps(r) + "\n" for r in rows))
         a.tasks, a.snapshots = str(tmp), str(run.snapshots)
         a.wheels = str(run.wheels_for(rows[0]["repo"]))
+    if a.fresh:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        import freshswe_env
+        freshswe_env.patch(a.fresh)
+        comp = Path(a.fresh)  # snapshots, graphs and embeddings live at the same paths
     tasks_path = Path(a.tasks)
     if a.limit:
         rows = [json.loads(l) for l in open(tasks_path)]
