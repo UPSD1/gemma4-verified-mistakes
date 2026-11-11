@@ -19,4 +19,28 @@
 
 Tasks flagged by: 0 raters 409, 1 raters 43, 2 raters 195
 
-(No --results given: sections 3-4, solve rate by rating, appear once runs exist.)
+## 3. Solve rate by rating
+
+
+freshswe:
+
+| Arm | no rater flagged | one flagged | all flagged | worst score 0-1 | worst score 2-3 |
+|---|---:|---:|---:|---:|---:|
+| base | 44% (213/484) | 13% (9/68) | 2% (6/248) | 44% (213/484) | 5% (15/316) |
+
+all:
+
+| Arm | no rater flagged | one flagged | all flagged | worst score 0-1 | worst score 2-3 |
+|---|---:|---:|---:|---:|---:|
+| base | 44% (213/484) | 13% (9/68) | 2% (6/248) | 44% (213/484) | 5% (15/316) |
+
+## 4. Does the rating predict difficulty? (all arms pooled)
+
+| Worst score | Tasks with results | Solve rate (runs) |
+|---:|---:|---:|
+| 0 | 71 | 60% (171/284) |
+| 1 | 50 | 21% (42/200) |
+| 2 | 54 | 7% (15/216) |
+| 3 | 25 | 0% (0/100) |
+
+Rated tasks with no result, per arm: base 447

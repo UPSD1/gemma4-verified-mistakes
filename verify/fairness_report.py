@@ -43,9 +43,11 @@ def load_results(specs):
     for spec in specs:
         arm, _, path = spec.partition("=")
         p = Path(path)
-        f = p / "task_results.jsonl" if p.is_dir() else p
-        for r in read_jsonl(f):
-            out[arm][r["instance_id"]].append(bool(r.get("resolved")))
+        # A run folder may hold one task_results.jsonl or one per repo in subfolders.
+        files = sorted(p.rglob("task_results.jsonl")) if p.is_dir() else [p]
+        for f in files:
+            for r in read_jsonl(f):
+                out[arm][r["instance_id"]].append(bool(r.get("resolved")))
     return out
 
 
@@ -58,6 +60,8 @@ if __name__ == "__main__":
     ap.add_argument("rated", nargs="+", help="*.rated.jsonl from fairness_screen.py, one per rater")
     ap.add_argument("--results", action="append", default=[], help="ARM=run folder or task_results.jsonl")
     ap.add_argument("--threshold", type=int, default=2)
+    ap.add_argument("--exclude-prefix", default="", help="comma-separated instance_id prefixes to leave out, "
+                    "e.g. black_,isort_ (tasks with a broken environment)")
     ap.add_argument("--out", help="also write the report to this .md file")
     a = ap.parse_args()
 
@@ -65,6 +69,9 @@ if __name__ == "__main__":
     say = lines.append
     raters = dict(load_rated(p) for p in a.rated)
     ids = sorted(set.intersection(*(set(r) for r in raters.values())))
+    skip = tuple(x for x in a.exclude_prefix.split(",") if x)
+    if skip:
+        ids = [t for t in ids if not t.startswith(skip)]
     any_rows = next(iter(raters.values()))
     set_of = {t: any_rows[t]["meta"].get("set", "?") for t in ids}
     tag_of = {t: any_rows[t]["meta"].get("grpc_tag") for t in ids}
@@ -133,10 +140,10 @@ if __name__ == "__main__":
                     cells.append(rate(vals))
                 say(f"| {arm} | " + " | ".join(cells) + " |")
         say("\n## 4. Does the rating predict difficulty? (all arms pooled)\n")
-        say("| Worst score | Tasks | Solve rate |")
+        say("| Worst score | Tasks with results | Solve rate (runs) |")
         say("|---:|---:|---:|")
         for level in range(4):
-            tt = [t for t in ids if worst[t] == level]
+            tt = [t for t in ids if worst[t] == level and any(t in res for res in results.values())]
             vals = [v for res in results.values() for t in tt for v in res.get(t, [])]
             say(f"| {level} | {len(tt)} | {rate(vals)} |")
         missing = {arm: sum(1 for t in ids if t not in res) for arm, res in results.items()}
