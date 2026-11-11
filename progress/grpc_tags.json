@@ -1,0 +1,53 @@
+{
+  "note": "Hand-checked Nov 11 2026: is the fix in the gRPC call path (retry/timeout/deadline machinery, bidi streaming, gRPC channel and call wrappers)? api-core's retry module also serves REST; retry fixes count here, retry predicates for HTTP-only errors do not. The 18 tasks the automatic tag called 'other' (client_options, path_template, page_iterator, iam, ...) were not re-checked and count as not gRPC-path.",
+  "grpc_path": {
+    "count": 16,
+    "ids": {
+      "api_core_164": "retry delay settings",
+      "api_core_321": "retry deadline error",
+      "api_core_529": "gRPC async stream call wrapper",
+      "api_core_583": "gRPC channel creation (DirectPath)",
+      "api_core_592": "retry timeout/deadline handling",
+      "api_core_649": "retry_target with awaitables",
+      "api_core_667": "retry wrapper (revert of api_core_668)",
+      "api_core_668": "retry wrapper (async check)",
+      "api_core_743": "retry wrapper (second revert of api_core_668)",
+      "api_core_770": "bidi resource leak",
+      "api_core_776": "timeout applied to RPC calls",
+      "api_core_793": "retry backoff timing, unary and streaming",
+      "api_core_814": "bidi consumer shutdown",
+      "api_core_821": "bidi streaming consumer",
+      "api_core_851": "bidi stream closing",
+      "api_core_879": "retry error chaining"
+    }
+  },
+  "not_grpc_path_checked": {
+    "api_core_178": "retry predicate for requests (HTTP) errors",
+    "api_core_237": "retry predicate for requests (HTTP) errors",
+    "api_core_577": "import path compatibility only",
+    "api_core_587": "import path compatibility only",
+    "api_core_688": "exceptions from HTTP responses (REST)",
+    "api_core_869": "mTLS on the operations client (REST transport)"
+  },
+  "not_grpc_path_auto": [
+    "api_core_155",
+    "api_core_159",
+    "api_core_197",
+    "api_core_200",
+    "api_core_248",
+    "api_core_259",
+    "api_core_275",
+    "api_core_379",
+    "api_core_411",
+    "api_core_433",
+    "api_core_445",
+    "api_core_546",
+    "api_core_561",
+    "api_core_621",
+    "api_core_638",
+    "api_core_712",
+    "api_core_754",
+    "api_core_812"
+  ],
+  "related_tasks": "api_core_668, api_core_667 and api_core_743 are one change and its two reverts: count them as one bug when reporting."
+}

@@ -83,9 +83,18 @@ if __name__ == "__main__":
     for n in raters:
         cells = [rate([flag[n][t] for t in ids if set_of[t] == s]) for s in sets]
         say(f"| {n} | " + " | ".join(cells) + f" | {rate([flag[n][t] for t in ids])} |")
+    fmt_of = {t: any_rows[t]["meta"].get("statement_format") for t in ids}
+    fmts = sorted({v for v in fmt_of.values() if v})
+    if fmts:
+        say("\nBy bug-report format (what the agent sees):\n")
+        say("| Format | Tasks | " + " | ".join(f"flagged by {n}" for n in raters) + " |")
+        say("|---|---:|" + "---:|" * len(raters))
+        for g in fmts:
+            tt = [t for t in ids if fmt_of[t] == g]
+            say(f"| {g} | {len(tt)} | " + " | ".join(rate([flag[n][t] for t in tt]) for n in raters) + " |")
     tags = sorted({v for v in tag_of.values() if v})
     if tags:
-        say("\ngRPC slice by tag (automatic; check by hand before quoting):\n")
+        say("\ngRPC slice by tag (hand-checked labels in progress/grpc_tags.json when present):\n")
         say("| Tag | Tasks | " + " | ".join(f"flagged by {n}" for n in raters) + " |")
         say("|---|---:|" + "---:|" * len(raters))
         for g in tags:

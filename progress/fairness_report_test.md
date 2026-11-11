@@ -9,13 +9,12 @@
 | claude-opus-5-5 | 60% (24/40) | 0% (0/45) | 28% (24/85) |
 | gpt-6.1-sol | 50% (20/40) | 0% (0/45) | 24% (20/85) |
 
-gRPC slice by tag (automatic; check by hand before quoting):
+gRPC slice by tag (hand-checked labels in progress/grpc_tags.json when present):
 
 | Tag | Tasks | flagged by claude-opus-5-5 | flagged by gpt-6.1-sol |
 |---|---:|---:|---:|
-| grpc_adjacent | 10 | 40% (4/10) | 30% (3/10) |
-| grpc_path | 12 | 50% (6/12) | 42% (5/12) |
-| other | 18 | 78% (14/18) | 67% (12/18) |
+| grpc_path | 16 | 44% (7/16) | 31% (5/16) |
+| other | 24 | 71% (17/24) | 62% (15/24) |
 
 ## 2. Agreement between raters
 
