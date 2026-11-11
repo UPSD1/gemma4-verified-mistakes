@@ -9,7 +9,7 @@ ATIF-v1.7) and writes, under --out (default data/training):
   dpo_same_task.jsonl   preliminary pairs for arm (d): success vs failure on the same task,
                         graded; the final arm (d) pairs come from shared branch points
   branch_points.jsonl   where to resample failed runs for the recovery splices of arms (b)/(c)/(d):
-                        the first step that went wrong within the first --branch-window tokens
+                        the first failure after the agent's first edit, within --branch-window tokens
   summary.json          counts
 
 Chat examples use the OpenAI message format the trainer expects: system, user (bug report),
@@ -28,7 +28,7 @@ Tasks are kept out when their environment is broken (--exclude-prefix, default b
 or when both fairness raters flag them (they are almost never solved, so their failures teach
 noise); pass --keep-flagged to keep them.
 
-    python3 training/build_data.py --runs ~/Downloads/base_runs_2026-11-11
+    python3 training/build_data.py --runs ~/Downloads/base_runs_2026-11-11 --runs data/pod_results/mined_base
 """
 import argparse
 import itertools
@@ -48,7 +48,11 @@ ERROR_RE = re.compile(r"Traceback \(most recent call last\)|\bFAILED\b|\bError\b
 
 
 def tokens(text):
-    return int(len(text) / CHARS_PER_TOKEN)
+    return int(len(text or "") / CHARS_PER_TOKEN)
+
+
+def msg_text(m):
+    return (m.get("content") or "") + (m.get("reasoning") or "")
 
 
 def grade(row):
@@ -68,7 +72,7 @@ def to_messages(trace):
 
     def count(m):
         nonlocal total
-        total += tokens(m["content"]) + sum(tokens(c["function"]["arguments"]) for c in m.get("tool_calls", []))
+        total += tokens(msg_text(m)) + sum(tokens(c["function"]["arguments"]) for c in m.get("tool_calls", []))
         m["tokens_so_far"] = total
 
     for st in trace["steps"]:
@@ -83,7 +87,9 @@ def to_messages(trace):
             msgs.append({"role": "user", "content": text, "loss": False})
         elif src == "agent":
             calls = st.get("tool_calls") or []
-            msgs.append({"role": "assistant", "content": text, "loss": True, "step_id": st.get("step_id"),
+            # Thinking stays thinking: Gemma's template renders `reasoning` as its thought channel.
+            body = {"content": "", "reasoning": text} if ev == "thinking" else {"content": text}
+            msgs.append({"role": "assistant", **body, "loss": True, "step_id": st.get("step_id"),
                          "tool_calls": [{"id": c.get("tool_call_id"), "type": "function",
                                          "function": {"name": c.get("function_name"),
                                                       "arguments": json.dumps(c.get("arguments", {}))}}
@@ -134,37 +140,51 @@ def segments(trace, msgs, carry):
     return out
 
 
+EDIT_TOOLS = {"edit_file", "write_file"}
+
+
 def branch_point(msgs, window):
-    """First assistant step, within the first `window` tokens and after the bug report, whose tool
-    result shows an error or failing tests. Branching resamples that assistant step onward."""
+    """As in the plan: the first tool result showing a failure (failing test, traceback, rejected edit)
+    AFTER the agent's first edit, within the first `window` tokens. Failures before any edit are
+    mostly exploration (a missing file, an empty grep), not mistakes to recover from. Branching
+    resamples the assistant step that issued the failing call, onward."""
+    first_edit = next((i for i, m in enumerate(msgs) if m["role"] == "assistant"
+                       and any(c["function"]["name"] in EDIT_TOOLS for c in m.get("tool_calls", []))), None)
+    if first_edit is None:
+        return None, "no_edit"
     for i, m in enumerate(msgs):
         if m["tokens_so_far"] > window:
             break
-        if m["role"] == "tool" and ERROR_RE.search(m["content"]) and i >= 3:
+        if i > first_edit and m["role"] == "tool" and ERROR_RE.search(m["content"]):
             # the assistant message that issued this call
             j = max(k for k in range(i) if msgs[k]["role"] == "assistant")
             return j, "tool_error_or_failing_tests"
-    # No visible error early on: branch at the middle of the window.
-    mids = [k for k, m in enumerate(msgs) if m["role"] == "assistant" and m["tokens_so_far"] <= window]
+    # No failure after the first edit inside the window: branch at the middle of the window, after the edit.
+    mids = [k for k, m in enumerate(msgs) if m["role"] == "assistant" and k >= first_edit
+            and m["tokens_so_far"] <= window]
     return (mids[len(mids) // 2], "window_midpoint") if mids else (None, "none")
 
 
 def load_flags():
     flags = defaultdict(int)
-    for r in ("opus", "sol"):
-        p = ROOT / "data" / "tasks" / "screen" / f"train_sets.{r}.fairness_log.jsonl"
-        if p.exists():
-            for x in read_jsonl(p):
-                flags[x["instance_id"]] += x["status"] == "flagged"
+    for screen in ("train_sets", "mined_sets"):  # FreshSWE-Py and our mined tasks
+        for r in ("opus", "sol"):
+            p = ROOT / "data" / "tasks" / "screen" / f"{screen}.{r}.fairness_log.jsonl"
+            if p.exists():
+                for x in read_jsonl(p):
+                    flags[x["instance_id"]] += x["status"] == "flagged"
     return flags
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", required=True, help="base-run folder (contains */fresh_base/r*/)")
+    ap.add_argument("--runs", required=True, action="append",
+                    help="base-run folder(s); every task_results.jsonl below it with a traces/ folder next to it "
+                         "is one pass. Repeat for several sources, e.g. FreshSWE-Py and the mined tasks")
     ap.add_argument("--out", default=str(ROOT / "data" / "training"))
     ap.add_argument("--max-tokens", type=int, default=28000, help="drop SFT examples longer than this")
-    ap.add_argument("--branch-window", type=int, default=16000, help="branch only within the first N tokens")
+    ap.add_argument("--branch-window", type=int, default=32000,
+                    help="branch only within the first N tokens (32k: splitting at compaction keeps examples short)")
     ap.add_argument("--exclude-prefix", default="black_,isort_")
     ap.add_argument("--keep-flagged", action="store_true", help="keep tasks both fairness raters flag")
     ap.add_argument("--no-split", action="store_true", help="keep whole runs (drop those over --max-tokens)")
@@ -177,8 +197,17 @@ if __name__ == "__main__":
     flags = load_flags()
 
     runs = []
-    for res in sorted(Path(a.runs).expanduser().glob("*/fresh_base/r*/task_results.jsonl")):
-        pass_id = res.parent.name
+    # Training runs only: FreshSWE-Py (fresh_base) and our mined tasks (mined_base). Test-set runs
+    # (OOD-45, gRPC, public) can sit in the same folders and must never become training data.
+    TRAIN_SOURCES = {"fresh_base": "freshswe", "mined_base": "mined"}
+    results = []
+    for root in a.runs:
+        for res in sorted(Path(root).expanduser().rglob("task_results.jsonl")):
+            src = next((v for k, v in TRAIN_SOURCES.items() if k in res.parts), None)
+            if src and (res.parent / "traces").is_dir():
+                results.append((src, res))
+    for src, res in results:
+        pass_id = f"{src}/{res.parent.name}"
         for row in read_jsonl(res):
             tid = row["instance_id"]
             trace = res.parent / "traces" / f"trace_{tid}.json"
@@ -207,7 +236,7 @@ if __name__ == "__main__":
         return cache[r["trace"]][2]
 
     clean = lambda ms: [{k: v for k, v in m.items() if k not in ("tokens_so_far", "step_id")} for m in ms]  # noqa: E731
-    size = lambda ms: sum(tokens(m["content"]) + sum(tokens(c["function"]["arguments"]) for c in m.get("tool_calls", []))  # noqa: E731
+    size = lambda ms: sum(tokens(msg_text(m)) + sum(tokens(c["function"]["arguments"]) for c in m.get("tool_calls", []))  # noqa: E731
                           for m in ms)
 
     arm_a, dropped_long = [], 0
