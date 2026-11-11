@@ -20,6 +20,14 @@ AGENTS=("$@")
 SEEDS=${SEEDS:-1 2 3}
 PAR=${PAR:-8}
 CONC=${CONC:-12}
+# 1 = the agent's earlier thoughts reach the model (runpod/patch_vllm_reasoning.sh must be applied);
+# 0 = stock vLLM 0.19.1, which drops them. Use a separate results root for each setting.
+KEEP_REASONING=${KEEP_REASONING:-1}
+export VLLM_KEEP_REASONING_CONTENT=$KEEP_REASONING
+if [ "$KEEP_REASONING" = 1 ] && ! grep -q VLLM_KEEP_REASONING_CONTENT \
+     "$(python3 -c 'import vllm.entrypoints.chat_utils as m; print(m.__file__)')"; then
+  echo "KEEP_REASONING=1 but vLLM is not patched: run runpod/patch_vllm_reasoning.sh first"; exit 1
+fi
 OOD=/workspace/datasets/ood45
 LOG=/workspace/logs
 mkdir -p "$ROOT" "$LOG"
@@ -33,7 +41,7 @@ REPOS=$(python3 -c "import json; print(' '.join(sorted({json.loads(l)['repo'] fo
 cat > "$ROOT/eval_config.txt" <<EOF
 started $(date -u +%FT%TZ)
 gpu $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
-seeds $SEEDS  par $PAR  conc $CONC  repos $(echo $REPOS | wc -w)
+seeds $SEEDS  par $PAR  conc $CONC  repos $(echo $REPOS | wc -w)  keep_reasoning $KEEP_REASONING
 agents ${AGENTS[*]}
 repo $(git -C /workspace/repo rev-parse --short HEAD)
 EOF
@@ -69,6 +77,24 @@ PY
   if [ -n "$mods" ]; then  # the adapter must be served, not silently dropped
     curl -s localhost:8000/v1/models | grep -q "\"${mods%%=*}\"" || { echo "adapter ${mods%%=*} not served"; return 1; }
   fi
+  # The live server must keep (KEEP_REASONING=1) or drop (0) a thought sent as reasoning_content.
+  python3 - "$KEEP_REASONING" <<'PY' || return 1
+import json, sys, urllib.request
+def post(path, body):
+    req = urllib.request.Request("http://localhost:8000" + path, json.dumps(body).encode(), {"Content-Type": "application/json"})
+    return json.load(urllib.request.urlopen(req, timeout=60))
+model = json.load(urllib.request.urlopen("http://localhost:8000/v1/models"))["data"][0]["id"]
+msgs = [{"role": "user", "content": "What time is it?"},
+        {"role": "assistant", "content": "", "reasoning_content": "Secret word PAPAYAQUOKKA.",
+         "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "get_time", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "12:34"}]
+toks = post("/tokenize", {"model": model, "messages": msgs, "add_generation_prompt": True,
+                          "chat_template_kwargs": {"enable_thinking": True}})["tokens"]
+kept = "PAPAYAQUOKKA" in post("/detokenize", {"model": model, "tokens": toks})["prompt"]
+want = sys.argv[1] == "1"
+print(f"reasoning check: thought kept={kept}, expected {want}")
+sys.exit(0 if kept == want else 1)
+PY
 }
 
 for SEED in $SEEDS; do
