@@ -8,13 +8,14 @@ echo "=== Main pod ($RUNPOD_SSH_HOST:$RUNPOD_SSH_PORT): resampling for arms (b)-
 ssh "${O[@]}" -p "$RUNPOD_SSH_PORT" -i "$RUNPOD_SSH_KEY" "$RUNPOD_SSH_USER@$RUNPOD_SSH_HOST" '
   echo "time (UTC): $(date -u +%H:%M)"
   curl -s -m 5 localhost:8000/v1/models | grep -q gemma && echo "vLLM: up" || echo "vLLM: DOWN"
-  for B in resample resample_mined; do
-    [ -f /workspace/logs/$B.log ] || continue
-    echo "-- $B: $(grep -E "^start|DONE" /workspace/logs/$B.log | tr "\n" " ")"
+  [ -f /workspace/logs/t3.log ] && echo "-- resample test (T3): $(grep -cE "replayed" /workspace/logs/t3.log) replayed, $(grep -q T3_DONE /workspace/logs/t3.log && echo done || echo running), $(grep -c "\"resolved\": true" /workspace/results/t3/task_results.jsonl 2>/dev/null || true) recovered"
+  for B in resample_v2/fresh resample_v2/mined; do
+    [ -d /workspace/results/$B ] || continue
+    echo "-- $B: $(grep -E "^start|DONE" /workspace/logs/resample_v2.log 2>/dev/null | tr "\n" " ")"
     for d in /workspace/results/$B/s*_p*/; do
       [ -d "$d" ] || continue
       n=$(cat $d/task_results.jsonl 2>/dev/null | wc -l); b=$(wc -l < $d/branches.jsonl 2>/dev/null || echo "?")
-      r=$(grep -c "\"resolved\": true" $d/task_results.jsonl 2>/dev/null || echo 0)
+      r=$(grep -c "\"resolved\": true" $d/task_results.jsonl 2>/dev/null || true)
       echo "   $(basename $d): $n/$b continuations graded, $r recovered"
     done
   done' 2>/dev/null || echo "   (main pod not reachable)"
@@ -24,7 +25,7 @@ echo "=== Training pod (${TRAIN_SSH_HOST:-?}:${TRAIN_SSH_PORT:-?}): arm training
 [ -n "$TRAIN_SSH_HOST" ] && ssh "${O[@]}" -p "$TRAIN_SSH_PORT" -i "$TRAIN_SSH_KEY" "$TRAIN_SSH_USER@$TRAIN_SSH_HOST" '
   echo "time (UTC): $(date -u +%H:%M)"
   for L in /workspace/logs/train_arm_*.log; do
-    case "$L" in *stopped*) continue;; esac
+    case "$L" in *stopped*|*precleanup*) continue;; esac
     echo "-- $(basename $L .log): $(grep -E "examples," $L | tail -1)"
     grep -E "^step" $L | tail -1 | sed "s/^/   last: /"
     grep -qE "TRAIN_DONE" $L && echo "   DONE -> $(grep -E "adapter ->" $L | tail -1)"

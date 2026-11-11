@@ -26,7 +26,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_data import MAIN_AGENT, author, grade, segments, to_messages  # noqa: E402
+from build_data import MAIN_AGENT, MAX_MARKERS_PER_RUN, author, grade, marker_count, segments, to_messages  # noqa: E402
 
 OFFSET = 100000  # continuation step ids are shifted so they never collide with the prefix's
 
@@ -100,7 +100,7 @@ if __name__ == "__main__":
                                   "sample_dir": d.name})
 
     out = Path(a.out)
-    splices_b, splices_c, missing, long_drop = [], [], 0, 0
+    splices_b, splices_c, missing, long_drop, marker_drop = [], [], 0, 0, 0
     for c in conts:
         if not c["resolved"]:
             continue
@@ -109,6 +109,9 @@ if __name__ == "__main__":
             missing += 1
             continue
         tr, mistaken = splice(orig, c["branch_step_id"], json.load(open(c["cont_trace"])))
+        if marker_count(tr) > MAX_MARKERS_PER_RUN:  # same rule as arm (a)'s clean runs
+            marker_drop += 1
+            continue
         msgs, _ = to_messages(tr)
         for k, seg in enumerate(segments(tr, msgs, a.carry)):
             size = sum(len((m.get("content") or "") + (m.get("reasoning") or "")) for m in seg) / 3.5
@@ -156,7 +159,7 @@ if __name__ == "__main__":
                "grades": dict(Counter(c["grade"] for c in conts)),
                "splice_examples_b": len(splices_b), "splice_examples_c": len(splices_c),
                "clean_examples": len(clean_rows), "missing_original_traces": missing,
-               "dropped_over_max_tokens": long_drop, "dpo_pairs": len(pairs),
+               "dropped_over_max_tokens": long_drop, "dropped_over_max_markers": marker_drop, "dpo_pairs": len(pairs),
                "dpo_pairs_with_resolved_chosen": sum(p["chosen"]["grade"] == 3 for p in pairs)}
     (out / "splices_summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
