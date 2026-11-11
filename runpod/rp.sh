@@ -16,8 +16,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 set -a; source "$ROOT/.env"; set +a
 : "${RUNPOD_SSH_HOST:?set RUNPOD_SSH_HOST in .env}" "${RUNPOD_SSH_PORT:?set RUNPOD_SSH_PORT in .env}"
 
-SSH_OPTS=(-o ConnectTimeout=15 -o ServerAliveInterval=30 -p "$RUNPOD_SSH_PORT" -i "$RUNPOD_SSH_KEY")
-SCP_OPTS=(-o ConnectTimeout=15 -P "$RUNPOD_SSH_PORT" -i "$RUNPOD_SSH_KEY")
+SSH_OPTS=(-o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -p "$RUNPOD_SSH_PORT" -i "$RUNPOD_SSH_KEY")
+SCP_OPTS=(-o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -P "$RUNPOD_SSH_PORT" -i "$RUNPOD_SSH_KEY")
 TARGET="$RUNPOD_SSH_USER@$RUNPOD_SSH_HOST"
 expand() { eval "printf '%s' \"$1\""; }   # expand $RUNPOD_* in a path
 # Pod path variables, exported on the pod too so '$RUNPOD_FRESHSWE_DIR' works in "run".
