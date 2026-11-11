@@ -47,7 +47,8 @@ def prefix_steps(trace_path, branch_step_id):
     call that follow it without their own metrics). context: the part of that the model had in context
     at the failing step: everything if no compaction happened yet, else the steps since the last
     compaction cut plus CARRY earlier model calls."""
-    steps = [st for st in json.load(open(trace_path))["steps"]
+    trace = trace_path if isinstance(trace_path, dict) else json.load(open(trace_path))
+    steps = [st for st in trace["steps"]
              if st.get("source") == "agent" and author(st) == MAIN_AGENT]
     b = next((i for i, st in enumerate(steps) if st.get("step_id") == branch_step_id), None)
     if b is None:

@@ -218,18 +218,19 @@ COMPACTION_NOTE = ("[Earlier steps of this session were compacted into a summary
                    "The most recent steps follow.]")
 
 
-def segments(trace, msgs, carry):
+def segments(trace, msgs, carry, no_cut=()):
     """Split a run's messages at compaction points (prompt_tokens drops by >25% between model calls).
 
     After a cut the harness's summary is not in the trace, so the first agent turn of that segment
-    (which may rely on facts only the summary held) is kept as context but not trained."""
+    (which may rely on facts only the summary held) is kept as context but not trained. `no_cut`: step ids
+    whose drop is known not to be a compaction (training/build_splices.py: the first resampled call)."""
     pt = {st.get("step_id"): (st.get("metrics") or {}).get("prompt_tokens") for st in trace["steps"]
           if st.get("source") == "agent" and author(st) == MAIN_AGENT}
     asst = [i for i, m in enumerate(msgs) if m["role"] == "assistant"]
     cuts, prev = [], None
     for i in asst:
         cur = pt.get(msgs[i].get("step_id"))
-        if cur and prev and cur < 0.75 * prev:
+        if cur and prev and cur < 0.75 * prev and msgs[i].get("step_id") not in no_cut:
             cuts.append(i)
         prev = cur or prev
     head = [m for m in msgs[:asst[0]]] if asst else msgs
