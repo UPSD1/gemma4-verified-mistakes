@@ -9,7 +9,12 @@ Adds meta.set ("ood45" | "grpc") and, for gRPC tasks, meta.grpc_tag:
   other          general client code (client_options, path_template, ...)
 The tag is automatic (file names + keywords); check it by hand before quoting it.
 
-    python3 verify/build_screen_set.py
+    python3 verify/build_screen_set.py               # test sets -> data/tasks/screen/test_sets.jsonl
+    python3 verify/build_screen_set.py --train       # FreshSWE-Py training tasks -> train_sets.jsonl
+
+--train rates the 647 FreshSWE-Py training tasks (data/freshswe/train_tasks.jsonl, the IDs in
+progress/train_task_ids.json). Report only: ratings never drop training tasks. Our 184 mined
+tasks are added once their bug-report format is final, so the rater sees what the agent sees.
 """
 import re
 import sys
@@ -34,7 +39,9 @@ def grpc_tag(task):
 
 
 if __name__ == "__main__":
-    sets = [("ood45", ROOT / "data" / "ood45" / "tasks.jsonl"), ("grpc", TASK_DIR / "grpc" / "verified.jsonl")]
+    train = "--train" in sys.argv[1:]
+    sets = ([("freshswe", ROOT / "data" / "freshswe" / "train_tasks.jsonl")] if train else
+            [("ood45", ROOT / "data" / "ood45" / "tasks.jsonl"), ("grpc", TASK_DIR / "grpc" / "verified.jsonl")])
     rows = []
     for name, path in sets:
         if not path.exists():
@@ -44,7 +51,8 @@ if __name__ == "__main__":
             if name == "grpc":
                 meta["grpc_tag"] = grpc_tag(t)
             rows.append({**t, "meta": meta})
-    out = TASK_DIR / "screen" / "test_sets.jsonl"
+    out = TASK_DIR / "screen" / ("train_sets.jsonl" if train else "test_sets.jsonl")
     write_jsonl(out, rows)
     print(f"{len(rows)} tasks -> {out}: {dict(Counter(r['meta']['set'] for r in rows))}")
-    print("gRPC tags:", dict(Counter(r["meta"]["grpc_tag"] for r in rows if "grpc_tag" in r["meta"])))
+    if not train:
+        print("gRPC tags:", dict(Counter(r["meta"]["grpc_tag"] for r in rows if "grpc_tag" in r["meta"])))

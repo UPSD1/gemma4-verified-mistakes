@@ -21,6 +21,7 @@ vLLM on RunPod, OpenRouter). Each rater is a prefix of settings in .env, picked 
   key: ANTHROPIC_API_KEY for api.anthropic.com, OPENAI_API_KEY for api.openai.com,
        otherwise <P>_API_KEY (e.g. vLLM or OpenRouter)
   <P>_PRICE_IN  <P>_PRICE_OUT  <P>_MAX_COST  USD per 1M tokens and spend cap (optional)
+  <P>_TEMPERATURE                            optional; not sent unless set (some models reject it)
   <P>_REASONING_EFFORT                       set for reasoning models (low|medium|high);
                                              sends max_completion_tokens and no temperature
 
@@ -99,10 +100,15 @@ def build_prompt(task):
 
 
 def parse_rating(text):
-    """Pull {"clarity", "test_fit", "reason"} out of a reply; None if it isn't there."""
-    for m in reversed(list(re.finditer(r"\{[^{}]*\}", text, re.S))):
+    """Pull {"clarity", "test_fit", "reason"} out of a reply; None if it isn't there.
+
+    Decodes a JSON object starting at each "{" (last one first), so a reason that itself
+    contains braces, such as `insert({})`, still parses.
+    """
+    dec = json.JSONDecoder()
+    for i in reversed([m.start() for m in re.finditer(r"\{", text)]):
         try:
-            r = json.loads(m.group(0))
+            r, _ = dec.raw_decode(text, i)
             c, t = int(r["clarity"]), int(r["test_fit"])
         except (ValueError, KeyError, TypeError):
             continue
@@ -116,7 +122,9 @@ def chat(base_url, model, api_key, prompt, temperature, max_tokens=400, reasonin
     if reasoning_effort:  # reasoning models: thinking counts toward the limit, temperature is fixed
         body.update(reasoning_effort=reasoning_effort, max_completion_tokens=max_tokens)
     else:
-        body.update(temperature=temperature, max_tokens=max_tokens)
+        body["max_tokens"] = max_tokens
+        if temperature is not None:  # some models (e.g. Opus 5.5) reject temperature
+            body["temperature"] = temperature
     body = json.dumps(body).encode()
     req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions", data=body, headers={
         "Content-Type": "application/json", "Authorization": f"Bearer {api_key}"})
@@ -132,7 +140,10 @@ def screen(task, ask, ratings, threshold, on_error=None):
     prompt, got, errors = build_prompt(task), [], 0
     while len(got) < ratings and errors < ratings + 2:
         try:
-            r = parse_rating(ask(prompt))
+            reply = ask(prompt)
+            r = parse_rating(reply)
+            if r is None and on_error:  # the model answered, but not with the JSON asked for
+                on_error(ValueError(f"no rating in reply: {reply[:1500]!r}"))
         except Exception as e:  # network or server error: count it and retry
             r = None
             if on_error:
@@ -160,8 +171,9 @@ if __name__ == "__main__":
     ap.add_argument("--ratings", type=int, default=1, help="ratings per task; the worst counts")
     ap.add_argument("--threshold", type=int, default=2, help="flag if either score >= this")
     ap.add_argument("--filter", action="store_true", help="drop flagged tasks instead of only reporting")
-    ap.add_argument("--temperature", type=float, default=0.0, help="ignored for reasoning models")
-    ap.add_argument("--max-tokens", type=int, help="reply limit; default 400, or 4000 for reasoning models")
+    ap.add_argument("--temperature", type=float, help="sampling temperature (default <P>_TEMPERATURE, "
+                    "else not sent: the model's default); ignored for reasoning models")
+    ap.add_argument("--max-tokens", type=int, help="reply limit; default 1200, or 4000 for reasoning models")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--limit", type=int)
     ap.add_argument("--price-in", type=float, help="USD per 1M input tokens (default <P>_PRICE_IN)")
@@ -177,7 +189,9 @@ if __name__ == "__main__":
     a.price_out = a.price_out if a.price_out is not None else num(env("PRICE_OUT")) or 0.0
     a.max_cost = a.max_cost if a.max_cost is not None else num(env("MAX_COST"))
     effort = env("REASONING_EFFORT")
-    a.max_tokens = a.max_tokens or (4000 if effort else 400)
+    if a.temperature is None:
+        a.temperature = num(env("TEMPERATURE"))
+    a.max_tokens = a.max_tokens or (4000 if effort else 1200)
     stem = str(Path(a.inp).with_suffix("")) + "." + P.lower()
     a.out, a.log = a.out or stem + ".rated.jsonl", a.log or stem + ".fairness_log.jsonl"
     tasks = read_jsonl(a.inp)
@@ -214,11 +228,15 @@ if __name__ == "__main__":
     lock = threading.Lock()
     spent, errors_seen, successes = [0.0], [], [0]
 
-    def on_error(e):
+    err_path = Path(str(Path(a.log)).replace(".fairness_log.jsonl", ".errors.jsonl"))
+
+    def on_error(e, tid=None):
         with lock:
-            if len(errors_seen) < 3:  # show the first few so a bad key or model id is obvious
+            with open(err_path, "a") as f:  # every failure, for diagnosis; not used for results
+                f.write(json.dumps({"instance_id": tid, "error": f"{type(e).__name__}: {e}"[:2000]}) + "\n")
+            if len(errors_seen) < 6:  # show the first few so a bad key or model id is obvious
                 detail = e.read().decode(errors="replace")[:300] if hasattr(e, "read") else ""
-                print(f"  rater error: {e} {detail}", flush=True)
+                print(f"  rater error: {str(e)[:300]} {detail}", flush=True)
             errors_seen.append(e)
 
     def ask(prompt):
@@ -233,7 +251,7 @@ if __name__ == "__main__":
             return  # over budget: left unrated, so a later run resumes here
         if len(errors_seen) >= 10 and not successes[0]:
             return  # every call so far failed (bad key, model id or URL): stop instead of retrying all
-        r = screen(t, ask, a.ratings, a.threshold, on_error)
+        r = screen(t, ask, a.ratings, a.threshold, lambda e: on_error(e, t["instance_id"]))
         r["rater"] = model
         if r["status"] == "rater_failed":
             return  # not logged, so a rerun retries it
