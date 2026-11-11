@@ -6,7 +6,7 @@ set -uo pipefail
 source /workspace/env.sh
 source /workspace/repo/runpod/sandbox_tmp.sh
 AGENT=$1; ROOT=$2; TASKS=$3; PASSES=${4:-4}
-while pgrep -f "[r]un_ood45.sh" > /dev/null; do sleep 60; done
+[ "${NOWAIT:-0}" = 1 ] || while pgrep -f "[r]un_ood45.sh" > /dev/null; do sleep 60; done
 echo "start $(date -u +%H:%M)"
 for P in $(seq 1 "$PASSES"); do
   python /workspace/repo/runner/run_eval.py --fresh /workspace/datasets/freshswe --tasks "$TASKS" \
