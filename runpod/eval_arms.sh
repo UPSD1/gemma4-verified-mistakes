@@ -20,9 +20,12 @@ AGENTS=("$@")
 SEEDS=${SEEDS:-1 2 3}
 PAR=${PAR:-8}
 CONC=${CONC:-12}
-# 1 = the agent's earlier thoughts reach the model (runpod/patch_vllm_reasoning.sh must be applied);
-# 0 = stock vLLM 0.19.1, which drops them. Use a separate results root for each setting.
-KEEP_REASONING=${KEEP_REASONING:-1}
+# Default 0 = stock vLLM 0.19.1, exactly as the competition serves it. The harness (adk_submission,
+# resolvers/generation.py:66) already copies reasoning_content into `reasoning`, so the agent's earlier
+# thoughts reach the model either way; prompt_tokens in our traces match renderings with thoughts kept.
+# 1 = also accept bare reasoning_content (runpod/patch_vllm_reasoning.sh); only for clients that bypass
+# the harness. The check below sends bare reasoning_content, so it verifies the server setting itself.
+KEEP_REASONING=${KEEP_REASONING:-0}
 export VLLM_KEEP_REASONING_CONTENT=$KEEP_REASONING
 if [ "$KEEP_REASONING" = 1 ] && ! grep -q VLLM_KEEP_REASONING_CONTENT \
      "$(python3 -c 'import vllm.entrypoints.chat_utils as m; print(m.__file__)')"; then
@@ -32,7 +35,7 @@ OOD=/workspace/datasets/ood45
 LOG=/workspace/logs
 mkdir -p "$ROOT" "$LOG"
 
-busy=$(ps -eo args | grep -E "[r]un_eval.py|[r]esample.py|[t]rain_sft.py" | grep -v -- "--results $ROOT" | head -3)
+busy=$(ps -eo args | grep -E "[r]un_eval.py|[r]esample.py|[t]rain_sft.py|[t]rain_dpo.py|[l]ora_smoke.py|[v]erify_gold.py|[m]emorization.py" | grep -v -- "--results $ROOT" | head -3)
 if [ -n "$busy" ] && [ -z "${FORCE:-}" ]; then
   echo "Other GPU work is running; arms would not share the same load:"; echo "$busy"; exit 1
 fi
@@ -77,8 +80,9 @@ PY
   if [ -n "$mods" ]; then  # the adapter must be served, not silently dropped
     curl -s localhost:8000/v1/models | grep -q "\"${mods%%=*}\"" || { echo "adapter ${mods%%=*} not served"; return 1; }
   fi
-  # The live server must keep (KEEP_REASONING=1) or drop (0) a thought sent as reasoning_content.
-  python3 - "$KEEP_REASONING" <<'PY' || return 1
+  # The agent's earlier thought must reach the prompt the way the harness sends it (adk_submission
+  # mirrors reasoning_content into reasoning), whatever KEEP_REASONING is.
+  python3 - <<'PY' || return 1
 import json, sys, urllib.request
 def post(path, body):
     req = urllib.request.Request("http://localhost:8000" + path, json.dumps(body).encode(), {"Content-Type": "application/json"})
@@ -86,14 +90,14 @@ def post(path, body):
 model = json.load(urllib.request.urlopen("http://localhost:8000/v1/models"))["data"][0]["id"]
 msgs = [{"role": "user", "content": "What time is it?"},
         {"role": "assistant", "content": "", "reasoning_content": "Secret word PAPAYAQUOKKA.",
+         "reasoning": "Secret word PAPAYAQUOKKA.",
          "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "get_time", "arguments": "{}"}}]},
         {"role": "tool", "tool_call_id": "c1", "content": "12:34"}]
 toks = post("/tokenize", {"model": model, "messages": msgs, "add_generation_prompt": True,
                           "chat_template_kwargs": {"enable_thinking": True}})["tokens"]
 kept = "PAPAYAQUOKKA" in post("/detokenize", {"model": model, "tokens": toks})["prompt"]
-want = sys.argv[1] == "1"
-print(f"reasoning check: thought kept={kept}, expected {want}")
-sys.exit(0 if kept == want else 1)
+print(f"reasoning check: earlier thought in prompt = {kept} (must be True)")
+sys.exit(0 if kept else 1)
 PY
 }
 
@@ -102,13 +106,15 @@ for SEED in $SEEDS; do
     NAME=$(basename "$A"); OUT=$ROOT/$NAME/s$SEED
     [ -f "$OUT.done" ] && { echo "skip $NAME s$SEED"; continue; }
     start_vllm "$A" || exit 1
-    mkdir -p "$OUT"
+    rm -rf "$OUT"; mkdir -p "$OUT"  # a half-finished seed is rerun from scratch (results files append)
     echo "$NAME s$SEED start $(date -u +%H:%M)"
     echo $REPOS | tr ' ' '\n' | xargs -P "$PAR" -I{} sh -c \
       'N=$(echo {} | tr / _); python /workspace/repo/runner/run_eval.py --ood '"$OOD"' --repo {} --agent '"$A"' --results '"$OUT"'/$N --concurrency '"$CONC"' > '"$OUT"'/$N.log 2>&1'
     n=$(cat "$OUT"/*/task_results.jsonl 2>/dev/null | grep -c '"resolved": true')
     t=$(cat "$OUT"/*/task_results.jsonl 2>/dev/null | wc -l)
     echo "$NAME s$SEED done $(date -u +%H:%M): $n/$t resolved" | tee -a "$ROOT/progress.txt"
+    NT=$(cat "$OOD/tasks.jsonl" | grep -vc '"urllib3/urllib3"')
+    [ "$t" -eq "$NT" ] || { echo "$NAME s$SEED incomplete: $t of $NT tasks graded; not marking done"; exit 1; }
     touch "$OUT.done"
   done
 done

@@ -35,7 +35,9 @@ def kind(r):
         return "context_overflow"
     if e:
         return "error"
-    return "wrong_patch" if (r.get("agent_patch") or "").strip() else "empty_patch"
+    # task_results.jsonl rows carry agent_patch_size, not the patch text.
+    has_patch = (r.get("agent_patch_size") or 0) > 0 or bool((r.get("agent_patch") or "").strip())
+    return "wrong_patch" if has_patch else "empty_patch"
 
 
 def pass_at_k(n, c, k):

@@ -81,6 +81,15 @@ def encode(tok, messages, max_len):
     loss=True are trained; everything else (system, user, tool results, text a later message moved) is
     masked. A trained message can therefore never be given tool output or prompt text."""
     msgs = to_template(json.loads(json.dumps(messages)))
+    # Gemma's template hides the reasoning of every assistant turn that a later user message follows.
+    # Drop it here too, so the prefix renderings below agree with the final one: otherwise such a turn's
+    # text first appears in its final place only when the user message is added, and its tool call is
+    # silently owned by that (masked) message (audit of Nov 12). training/fix_examples.py keeps trained
+    # turns after the last user message, so this never removes a trained thought.
+    last_user = max((i for i, m in enumerate(msgs) if m["role"] == "user"), default=-1)
+    for i, m in enumerate(msgs[:last_user]):
+        if m["role"] == "assistant":
+            m.pop("reasoning", None)
     final = render(tok, msgs)
     trained = bytearray(len(final))
     settled = 0

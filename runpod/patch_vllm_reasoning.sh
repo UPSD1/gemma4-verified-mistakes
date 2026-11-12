@@ -7,6 +7,11 @@
 # VLLM_KEEP_REASONING_CONTENT=1. Without that variable the server behaves exactly as before, so the
 # patched file is safe to leave in place for unpatched runs.
 #
+# NOT NEEDED FOR THE COMPETITION HARNESS: adk_submission (resolvers/generation.py:66) already mirrors
+# reasoning_content into `reasoning` before the request reaches vLLM, and the prompt_tokens recorded in
+# our base-run traces match prompts rendered with earlier thoughts kept. The bug only bites clients that
+# call vLLM directly (as the Kaggle report's repro did).
+#
 #   bash runpod/patch_vllm_reasoning.sh            # apply (idempotent; keeps a .orig backup), then check
 #   bash runpod/patch_vllm_reasoning.sh check      # check only: renders one history both ways, no GPU
 set -euo pipefail
