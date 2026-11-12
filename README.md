@@ -1,4 +1,4 @@
-# Does a Small Coding Agent Learn from Its Own Mistakes?
+# Trained Never to Stop: What a Small Coding Agent Learns from Its Own Verified Recoveries
 
 Code for our Gemma 4 Developer Agent Paper Track study: fine-tuning Gemma 4 12B on its own test-verified
 recoveries, compared at an equal token budget with clean-only training, a masked variant, preference training
@@ -21,7 +21,8 @@ pull request is also a competition public task were removed.
 | `mining/` | Mine bug-fix pull requests (fastapi, rich, httpx, requests; python-api-core for the gRPC slice) and split each into fix and tests |
 | `verify/` | Fail-before / pass-after check of each mined task in Docker; the two-model task-quality screen; the memorization check |
 | `packaging/` | Package mined tasks so the competition harness runs them like FreshSWE-Py |
-| `runner/` | Run the harness on a task set (`run_eval.py`); summarize base runs; `analyze_eval.py` computes every Section 5 number |
+| `runner/` | Run the harness on a task set (`run_eval.py`); summarize base runs; `analyze_eval.py` (per-agent outcomes, repeated failing calls) and `paper_analyses.py` (Tables 1-2, Figure 2, how runs ended, nudges, thinking-cap loops, churn, training data and loss) compute every Section 5 number |
+| `notebooks/` | `reproduce_paper.ipynb`: rebuilds Tables 1-2, Figure 2 and the Section 4-5 counts from the released data on a CPU (also published as a Kaggle notebook) |
 | `training/` | Build the training data (`build_data.py`), resample from failures (`resample.py`), build splices and preference pairs (`build_splices.py`, `build_orig_pairs.py`), the v3 fixes (`fix_examples.py`), and train (`train_sft.py`, `train_dpo.py`) |
 | `runpod/` | Pod setup, vLLM serving, the evaluation scripts (`eval_arms.sh`, `queue_evals_final.sh`) and progress checks |
 | `agents/` | The recovery instruction used by the prompt-only control |
@@ -39,9 +40,11 @@ Settings (API keys, pod addresses) go in a `.env` copied from `.env.example`; it
    preference pairs for d), `python3 training/fix_examples.py` (v3 build).
 4. **Training.** `python training/train_sft.py` for arms a to c (LoRA rank 32, 2.25M trained tokens each),
    `python training/train_dpo.py` for arm d (from adapter b). Settings are in each adapter's `train_args.json`.
-5. **Evaluation.** `bash runpod/eval_arms.sh <results> <agent dirs>` on OOD-45 (seed 2, 8 repositories at a time,
-   up to 12 tasks each, 15-minute limit; 30 minutes for Section 5.6), then
-   `python runner/analyze_eval.py --root <results> --seed 2 --base base` for Tables 3 to 5 and Figure 3.
+5. **Evaluation.** `bash runpod/eval_arms.sh <results> <agent dirs>` on OOD-45 (seeds 2 and 1, 8 repositories at a time,
+   up to 12 tasks each, 15-minute limit; 30 minutes for Section 5), then
+   `python runner/analyze_eval.py --root <results> --seed 2 --base base` for per-agent outcomes, and
+   `python runner/paper_analyses.py --data <dataset folder>` for Tables 1-2, Figure 2 and every Section 4-5 count.
+   Or open `notebooks/reproduce_paper.ipynb`, which needs only the dataset and a CPU.
 
-Every run in the paper used the competition harness (swegemma 0.2.11) and vLLM 0.19.1 serving the competition's
+Training and evaluation ran on RunPod pods with one H100 or RTX PRO 6000. Every run in the paper used the competition harness (swegemma 0.2.11) and vLLM 0.19.1 serving the competition's
 4-bit Gemma 4 12B, with the adapter mounted.
