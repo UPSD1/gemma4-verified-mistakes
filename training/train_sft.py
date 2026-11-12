@@ -108,8 +108,8 @@ def encode(tok, messages, max_len):
     return ids[:max_len], labels[:max_len]
 
 
-def load_model(path, device, rank, alpha, dropout):
-    from peft import LoraConfig, get_peft_model
+def load_model(path, device, rank, alpha, dropout, init_adapter=None):
+    from peft import LoraConfig, PeftModel, get_peft_model
     from transformers import AutoModelForCausalLM
     model = AutoModelForCausalLM.from_pretrained(path, dtype=torch.bfloat16, device_map=None)
     model.to(device)
@@ -120,6 +120,8 @@ def load_model(path, device, rank, alpha, dropout):
     target = r".*language_model.*\.(" + "|".join(TARGETS) + r")$"
     if not any("language_model" in n for n, _ in model.named_modules()):
         target = r".*layers.*\.(" + "|".join(TARGETS) + r")$"
+    if init_adapter:  # continue training an existing adapter (a further pass over the same data)
+        return PeftModel.from_pretrained(model, init_adapter, is_trainable=True)
     cfg = LoraConfig(r=rank, lora_alpha=alpha, lora_dropout=dropout, target_modules=target, task_type="CAUSAL_LM")
     return get_peft_model(model, cfg)
 
@@ -181,6 +183,10 @@ if __name__ == "__main__":
     ap.add_argument("--steps", type=int, help="stop after this many optimizer steps (smoke tests)")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--init-adapter", help="start from this adapter instead of a fresh LoRA (a further pass)")
+    ap.add_argument("--order-offset", type=int, default=0,
+                    help="example order of pass k uses seed + offset + k; 1 gives the second pass the order a "
+                         "two-epoch run would have used")
     a = ap.parse_args()
 
     torch.manual_seed(a.seed)
@@ -208,7 +214,7 @@ if __name__ == "__main__":
     print(f"{len(data)} examples, {trained:,} trained tokens, {sum(len(i) for i, _ in data):,} tokens in all "
           f"(encoded in {time.time() - t0:.0f}s)", flush=True)
 
-    model = load_model(a.model, a.device, a.rank, a.alpha, a.dropout)
+    model = load_model(a.model, a.device, a.rank, a.alpha, a.dropout, a.init_adapter)
     model.print_trainable_parameters()
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=a.lr, weight_decay=0.0)
@@ -216,7 +222,8 @@ if __name__ == "__main__":
     sched = torch.optim.lr_scheduler.LambdaLR(
         opt, lambda s: min(1.0, (s + 1) / max(1, total_steps // 20)) * 0.5 * (1 + math.cos(math.pi * s / total_steps)))
     model.train()
-    order = [i for _ in range(math.ceil(a.epochs)) for i in random.Random(a.seed + _).sample(range(len(data)), len(data))]
+    order = [i for _ in range(math.ceil(a.epochs))
+             for i in random.Random(a.seed + a.order_offset + _).sample(range(len(data)), len(data))]
     order = order[: int(len(data) * a.epochs)]
     step, acc, t0 = 0, [], time.time()
     for k, i in enumerate(order):
