@@ -1,4 +1,4 @@
-# Trained Never to Stop: What a Small Coding Agent Learns from Its Own Verified Recoveries
+# Slower, Longer, Never Stopping: Fine-Tuning a Small Coding Agent on Its Own Verified Recoveries
 
 Code for our Gemma 4 Developer Agent Paper Track study: fine-tuning Gemma 4 12B on its own test-verified
 recoveries, compared at an equal token budget with clean-only training, a masked variant, preference training
