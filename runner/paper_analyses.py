@@ -16,6 +16,8 @@ Prints and returns:
               by another tool call, share of calls at the 4,096-token thinking cap, repeated lines in those capped
               thoughts, generation speed
   early_samples  cap share and submits on five random 20-task samples
+  minutes     mean model minutes per task: thoughts at the cap, step after a compaction, sub-agent, other (Figure 3)
+  settings_tests  30-minute limit, thinking budget 1,024 and presence penalty 0.4 against the 15-minute runs
 """
 import argparse
 import glob
@@ -269,6 +271,66 @@ def train_loss(data):
     return out
 
 
+def minutes_breakdown(d):
+    """Figure 3: mean model minutes per task, split into thoughts at the thinking cap, the step after a compaction
+    (its time includes the harness's summary call), the code-analysis sub-agent and all other steps. A step's model
+    time is the agent-clock time from the previous tool result to this step's output; tool time is negligible."""
+    tot = {"cap": 0.0, "compaction": 0.0, "subagent": 0.0, "other": 0.0}
+    n = 0
+    for f in glob.glob(f"{d}/*/traces/trace_*.json"):
+        n += 1
+        prev_obs, prev_prompt = None, None
+        for s in json.load(open(f))["steps"]:
+            if s.get("source") != "agent":
+                continue
+            e = s.get("extra") or {}
+            m = s.get("metrics") or {}
+            ts = e.get("elapsed_s")
+            if m and ts is not None and prev_obs is not None:
+                dt = max(0.0, ts - prev_obs)
+                if e.get("author", MAIN) != MAIN:
+                    tot["subagent"] += dt
+                elif (m.get("completion_tokens") or 0) >= CAP:
+                    tot["cap"] += dt
+                elif prev_prompt and (m.get("prompt_tokens") or 0) < 0.75 * prev_prompt:
+                    tot["compaction"] += dt
+                else:
+                    tot["other"] += dt
+            if m and e.get("author", MAIN) == MAIN:
+                prev_prompt = m.get("prompt_tokens") or prev_prompt
+            obs = (s.get("observation") or {}).get("extra") or {}
+            prev_obs = obs.get("elapsed_s", ts if ts is not None else prev_obs)
+    return {k: round(v / 60 / max(1, n), 2) for k, v in tot.items()}
+
+
+# Settings tests: (folder under eval/, run folder, agent dir name) -> the 15-minute v3 run on the same machine.
+SETTINGS = {
+    "30-minute limit": [("eval_30min", "s2", "base_30min", "base"), ("eval_30min", "s2", "arm_b_v3_30min", "b"),
+                        ("eval_30min", "s2", "arm_c_v3_30min", "c"), ("eval_30min", "s2", "arm_b_v1_30min", "b_v2"),
+                        ("eval_30min", "s2", "arm_c_v1_30min", "c_v2")],
+    "thinking budget 1,024": [("eval_tests", "s1", "base_think1024", "base"), ("eval_tests", "s1", "arm_b_v3_think1024", "b")],
+    "presence penalty 0.4": [("eval_tests", "s1", "base_pp04", "base"), ("eval_tests", "s1", "arm_a_v3_pp04", "a")],
+}
+
+
+def settings_tests(R, data):
+    """Each changed setting against the same agent at 15 minutes on the same machine (30 minutes ran on the seed-2
+    machine, the thinking and penalty tests on the seed-1 machine)."""
+    out = {}
+    for name, rows in SETTINGS.items():
+        for folder, run, agent, key in rows:
+            d = f"{data}/eval/{folder}/{agent}/{run}"
+            if not Path(d).is_dir() or key not in R:
+                continue
+            ps = R[key]
+            ref = ps[0] if run == "s2" or len(ps) == 1 else ps[1]
+            b, rb = behaviour(d), behaviour(ref)
+            out[f"{name}: {key}"] = {"solved_15min": sum(solved(ref).values()), "solved": sum(solved(d).values()),
+                                     "cap_share_pct": [rb["cap_share_pct"], b["cap_share_pct"]],
+                                     "submits": [rb["submits"], b["submits"]]}
+    return out
+
+
 def main(data, out=None):
     R = runs(data)
     res = {"table3": table3(R)}
@@ -280,6 +342,8 @@ def main(data, out=None):
     res["training_pool"] = training_pool(data)
     res["behaviour"] = {f"{k} seed{2 if i == 0 else 1}": behaviour(p) for k, ps in R.items() for i, p in enumerate(ps)}
     res["early_samples"] = early_samples(R)
+    res["minutes"] = {k: minutes_breakdown(ps[0]) for k, ps in R.items() if not k.endswith("_v2")}
+    res["settings_tests"] = settings_tests(R, data)
     if out:
         Path(out).write_text(json.dumps(res, indent=1))
     return res
