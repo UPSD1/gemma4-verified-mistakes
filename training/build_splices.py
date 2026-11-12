@@ -7,7 +7,8 @@ like arm (a)'s clean runs (training/build_data.py), so every example is what the
   arm_b_sft.jsonl   (b) Recovery: clean examples + splices, every agent turn trained
   arm_c_sft.jsonl   (c) Recovery-masked: same examples, but the mistaken step (the failing model call
                     at the branch point) is masked from the loss; the recovery after it is trained
-  dpo_pairs.jsonl   (d) pairs between continuations of the SAME branch point with different grades,
+  dpo_pairs.jsonl   (d) pairs between continuations of the SAME branch point with different grades
+                    (dpo_pairs_v3.jsonl: the same with the v3 fixes of training/fix_examples.py),
                     each side as chat messages (shared prompt, loss on the continuation only)
                     (graded scale from the plan, coarse version: resolved > patch with failing
                     tests > patch but hit a budget > no patch); prompt = the recorded prefix
@@ -28,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_data import MAIN_AGENT, MAX_MARKERS_PER_RUN, author, grade, marker_count, segments, to_messages  # noqa: E402
+from fix_examples import NUDGE as FIX_NUDGE, fix_broken_calls  # noqa: E402
 
 OFFSET = 100000  # continuation step ids are shifted so they never collide with the prefix's
 
@@ -91,6 +93,48 @@ def boundary_no_cut(original, branch_step_id, trace):
     if not pts or first is None or first["metrics"]["prompt_tokens"] < 0.75 * (pts[-1] - thoughts):
         return set()
     return {first["step_id"]}
+
+
+def dpo_side(c, roots, carry, v3=False, cont=None, no_cut=None):
+    """One side of a DPO pair: the segment holding the branch point, then continuation `c`, loss on the
+    continuation's agent turns only. `cont` overrides the continuation trace (the original run's own ending,
+    training/build_dpo_ext.py); `no_cut` overrides boundary_no_cut (an original run has no resampler nudge,
+    so a prompt drop right after the failing step is a real compaction)."""
+    orig = load_trace(c["orig_trace"], roots)
+    if orig is None:
+        return None, "missing"
+    tr, _ = splice(orig, c["branch_step_id"], cont if cont is not None else json.load(open(c["cont_trace"])))
+    if marker_count(tr) > MAX_MARKERS_PER_RUN:  # same rule as the SFT data
+        return None, "markers"
+    msgs, _ = to_messages(tr)
+    keep = boundary_no_cut(orig, c["branch_step_id"], tr) if no_cut is None else no_cut
+    for seg in segments(tr, msgs, carry, keep):
+        first = next((i for i, m in enumerate(seg) if (m.get("step_id") or 0) >= OFFSET), None)
+        if first is None:
+            continue
+        ms = [{**{x: v for x, v in m.items() if x not in ("tokens_so_far", "step_id")},
+               "loss": bool(m["loss"]) and (m.get("step_id") or 0) >= OFFSET} for m in seg]
+        # End the side at the continuation's first harness nudge: in Gemma's template a later user message
+        # drops every earlier thought, the shared prompt's included, so the two sides would no longer
+        # be compared from the same rendered state. What is compared is what came right after the mistake.
+        nudge = next((i for i in range(first, len(ms)) if ms[i]["role"] == "user"), None)
+        ms = ms[:nudge] if nudge is not None else ms
+        # v3 fidelity fixes (training/fix_examples.py, audit of Nov 12), so (d) sees what (b)/(c) v3 see:
+        # a lost sub-agent result drops the side; the resampler's nudge goes right after the failing
+        # step's tool result (it is what the continuation was started with, and it hides the prompt's
+        # thoughts the same way on both sides); broken text-form tool calls are cut and masked.
+        if v3:
+            if any(m["role"] == "user" and not (m.get("content") or "").strip() for m in ms):
+                return None, "lost_subagent_result"
+            if ms[first - 1]["role"] != "tool":
+                return None, "branch_not_after_tool_result"
+            ms = ms[:first] + [{"role": "user", "content": FIX_NUDGE, "loss": False}] + ms[first:]
+            fix_broken_calls(ms, Counter())
+            first += 1
+        if not any(m["loss"] for m in ms):
+            return None, "no_trained_turns"
+        return {"messages": ms, "prompt_len": first}, None
+    return None, "no_continuation"
 
 
 if __name__ == "__main__":
@@ -171,52 +215,34 @@ if __name__ == "__main__":
     # the segment that holds the branch point (the context the model had there, cut at compaction points
     # like every other example) followed by that continuation; only the continuation's agent turns carry
     # loss, so the two sides share an identical prompt and differ only in what came after the mistake.
-    def dpo_side(c):
-        orig = load_trace(c["orig_trace"], roots)
-        if orig is None:
-            return None, "missing"
-        tr, _ = splice(orig, c["branch_step_id"], json.load(open(c["cont_trace"])))
-        if marker_count(tr) > MAX_MARKERS_PER_RUN:  # same rule as the SFT data
-            return None, "markers"
-        msgs, _ = to_messages(tr)
-        for seg in segments(tr, msgs, a.carry, boundary_no_cut(orig, c["branch_step_id"], tr)):
-            first = next((i for i, m in enumerate(seg) if (m.get("step_id") or 0) >= OFFSET), None)
-            if first is None:
-                continue
-            ms = [{**{x: v for x, v in m.items() if x not in ("tokens_so_far", "step_id")},
-                   "loss": bool(m["loss"]) and (m.get("step_id") or 0) >= OFFSET} for m in seg]
-            # End the side at the continuation's first harness nudge: in Gemma's template a later user message
-            # drops every earlier thought, the shared prompt's included, so the two sides would no longer
-            # be compared from the same rendered state. What is compared is what came right after the mistake.
-            nudge = next((i for i in range(first, len(ms)) if ms[i]["role"] == "user"), None)
-            ms = ms[:nudge] if nudge is not None else ms
-            if not any(m["loss"] for m in ms):
-                return None, "no_trained_turns"
-            return {"messages": ms, "prompt_len": first}, None
-        return None, "no_continuation"
-
     by_branch = defaultdict(list)
     for c in conts:
         by_branch[c["branch"]].append(c)
-    pairs, pair_drop = [], Counter()
-    for key, cs in by_branch.items():
-        for x, y in itertools.combinations(cs, 2):
-            if x["grade"] == y["grade"]:
-                continue
-            ch, rj = (x, y) if x["grade"] > y["grade"] else (y, x)
-            (sc, why_c), (sr, why_r) = dpo_side(ch), dpo_side(rj)
-            if sc is None or sr is None:
-                pair_drop[why_c or why_r] += 1
-                continue
-            if sc["messages"][: sc["prompt_len"]] != sr["messages"][: sr["prompt_len"]]:
-                pair_drop["prompt_mismatch"] += 1
-                continue
-            pairs.append({"instance_id": key[0], "branch": list(key), "branch_step_id": ch["branch_step_id"],
-                          "chosen": {"trace": ch["cont_trace"], "grade": ch["grade"], **sc},
-                          "rejected": {"trace": rj["cont_trace"], "grade": rj["grade"], **sr}})
-    with open(out / "dpo_pairs.jsonl", "w") as f:
-        for p in pairs:
-            f.write(json.dumps(p) + "\n")
+    # dpo_pairs.jsonl: as arm (d) v2 was trained (from adapter (b) v2). dpo_pairs_v3.jsonl: with the v3 fidelity
+    # fixes, for a (d) trained from adapter (b) v3 (training/fix_examples.py).
+    all_pairs, all_drop = {}, {}
+    for v3, name in ((False, "dpo_pairs.jsonl"), (True, "dpo_pairs_v3.jsonl")):
+        pairs, pair_drop = [], Counter()
+        for key, cs in by_branch.items():
+            for x, y in itertools.combinations(cs, 2):
+                if x["grade"] == y["grade"]:
+                    continue
+                ch, rj = (x, y) if x["grade"] > y["grade"] else (y, x)
+                (sc, why_c), (sr, why_r) = dpo_side(ch, roots, a.carry, v3), dpo_side(rj, roots, a.carry, v3)
+                if sc is None or sr is None:
+                    pair_drop[why_c or why_r] += 1
+                    continue
+                if sc["messages"][: sc["prompt_len"]] != sr["messages"][: sr["prompt_len"]]:
+                    pair_drop["prompt_mismatch"] += 1
+                    continue
+                pairs.append({"instance_id": key[0], "branch": list(key), "branch_step_id": ch["branch_step_id"],
+                              "chosen": {"trace": ch["cont_trace"], "grade": ch["grade"], **sc},
+                              "rejected": {"trace": rj["cont_trace"], "grade": rj["grade"], **sr}})
+        with open(out / name, "w") as f:
+            for p in pairs:
+                f.write(json.dumps(p) + "\n")
+        all_pairs[name], all_drop[name] = pairs, pair_drop
+    pairs, pair_drop = all_pairs["dpo_pairs.jsonl"], all_drop["dpo_pairs.jsonl"]
 
     summary = {"continuations": len(conts), "resolved": sum(c["resolved"] for c in conts),
                "branch_points": len(by_branch),
@@ -228,6 +254,7 @@ if __name__ == "__main__":
                "duplicate_segments_dropped": dup_drop, "recoveries_without_cut_at_branch": boundary_kept,
                "branch_points_in_splices": len({tuple(r["branch"]) for r in splices_b}),
                "dpo_pairs": len(pairs), "dpo_pairs_dropped": dict(pair_drop),
+               "dpo_pairs_v3": len(all_pairs["dpo_pairs_v3.jsonl"]), "dpo_pairs_v3_dropped": dict(all_drop["dpo_pairs_v3.jsonl"]),
                "dpo_pairs_with_resolved_chosen": sum(p["chosen"]["grade"] == 3 for p in pairs),
                "dpo_grade_pairs": {f"{k[0]}>{k[1]}": v for k, v in
                                    Counter((p["chosen"]["grade"], p["rejected"]["grade"]) for p in pairs).items()}}
