@@ -340,7 +340,9 @@ def settings_tests(R, data):
             if not Path(d).is_dir() or key not in R:
                 continue
             ps = R[key]
-            ref = ps[0] if run == "s2" or len(ps) == 1 else ps[1]
+            ref = ps.get(run[1:])  # the same seed, so the same machine
+            if ref is None:
+                continue
             b, rb = behaviour(d), behaviour(ref)
             out[f"{name}: {key}"] = {"solved_15min": sum(solved(ref).values()), "solved": sum(solved(d).values()),
                                      "cap_share_pct": [rb["cap_share_pct"], b["cap_share_pct"]],
@@ -359,7 +361,7 @@ def main(data, out=None):
     res["training_pool"] = training_pool(data)
     res["behaviour"] = {f"{k} seed{s}": behaviour(p) for k, ps in R.items() for s, p in ps.items()}
     res["early_samples"] = early_samples(R)
-    res["minutes"] = {k: minutes_breakdown(ps[0]) for k, ps in R.items() if not k.endswith("_v2")}
+    res["minutes"] = {k: minutes_breakdown(main_run(ps)) for k, ps in R.items() if not k.endswith("_v2")}
     res["settings_tests"] = settings_tests(R, data)
     if out:
         Path(out).write_text(json.dumps(res, indent=1))
