@@ -84,12 +84,41 @@ def split_at_users(msgs, stats):
                 m.pop("reasoning", None)  # hidden by the template once the user message follows
 
 
+def fix_dpo(path, out):
+    """Arm (d) pairs: both continuations were sampled after the resampler's nudge, which follows the
+    prompt (the recorded prefix ending with the failing step's tool result). Insert it on both sides."""
+    stats, rows = collections.Counter(), []
+    for l in open(path):
+        if not l.strip():
+            continue
+        p = json.loads(l)
+        for side in ("chosen", "rejected"):
+            s = p[side]
+            L = s["prompt_len"]
+            msgs = [dict(m) for m in s["messages"]]
+            if msgs[L - 1]["role"] == "user" and msgs[L - 1].get("content") == NUDGE:
+                stats["already_had_nudge"] += 1
+            else:
+                msgs = msgs[:L] + [{"role": "user", "content": NUDGE, "loss": False}] + msgs[L:]
+                s["prompt_len"] = L + 1
+                stats["nudge_inserted"] += 1
+            fix_broken_calls(msgs, stats)
+            s["messages"] = msgs
+        rows.append(p)
+    Path(out).write_text("".join(json.dumps(r) + "\n" for r in rows))
+    print(json.dumps(dict(stats, pairs=len(rows))), "->", out)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
+    ap.add_argument("--dpo", action="store_true", help="--data is dpo_pairs.jsonl (arm d)")
     ap.add_argument("--pair", help="the other recovery arm's file (b for c, c for b), to locate the failing step")
     ap.add_argument("--out")
     a = ap.parse_args()
+    if a.dpo:
+        fix_dpo(a.data, a.out or Path(a.data).with_name(Path(a.data).stem + "_v3.jsonl"))
+        return
     rows = [json.loads(l) for l in open(a.data) if l.strip()]
     other = {}
     if a.pair:
