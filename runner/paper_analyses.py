@@ -30,6 +30,7 @@ MAIN = "swe_baseline_agent"
 V3 = {"base": "base", "prompt": "prompt_recovery", "a": "arm_a_v3", "b": "arm_b_v3", "c": "arm_c_v3",
       "d": "arm_d17_v3", "d_ablation": "arm_d23_v3"}
 V2 = {"a": "arm_a_v1", "b": "arm_b_v1", "c": "arm_c_v1", "d": "arm_d_v1"}
+ROUND2 = {"b_second_pass": "arm_b_v3_ep2", "submit_only": "arm_a_submit_only_v3"}
 
 
 def rows_of(d):
@@ -41,13 +42,26 @@ def solved(d):
 
 
 def runs(data):
-    """agent -> list of run folders (v3 run 1 = seed 2, run 2 = seed 1; v2 one run)."""
+    """agent -> {seed: run folder}. The v3 agents ran with seed 2 (eval_v3) and seed 1 (eval_v3_seed1), each seed on its
+    own machine; the v2 build once with seed 2; the round-2 agents (second pass of (b), submit-only clean arm) with both
+    seeds on the same two machines (eval_round2). Comparisons with base always pair runs of the same seed."""
     out = {}
     for k, v in V3.items():
-        out[k] = [p for p in (f"{data}/eval/eval_v3/{v}/s2", f"{data}/eval/eval_v3_seed1/{v}/s1") if Path(p).is_dir()]
+        out[k] = {s: p for s, p in (("2", f"{data}/eval/eval_v3/{v}/s2"), ("1", f"{data}/eval/eval_v3_seed1/{v}/s1"))
+                  if Path(p).is_dir()}
     for k, v in V2.items():
-        out[f"{k}_v2"] = [f"{data}/eval/eval_v2_e2/{v}/s2"]
+        out[f"{k}_v2"] = {"2": f"{data}/eval/eval_v2_e2/{v}/s2"}
+    for k, v in ROUND2.items():
+        found = {s: f"{data}/eval/eval_round2/{v}/s{s}" for s in ("2", "1")
+                 if glob.glob(f"{data}/eval/eval_round2/{v}/s{s}/*/task_results.jsonl")}
+        if found:
+            out[k] = found
     return out
+
+
+def main_run(ps):
+    """The run used for one-run measures: seed 2 when there is one (Tables 1-2 and Figure 2 use it)."""
+    return ps.get("2") or next(iter(ps.values()))
 
 
 def boot(d, n=10000, seed=0):
@@ -57,17 +71,18 @@ def boot(d, n=10000, seed=0):
 
 
 def table3(R):
-    base = [solved(p) for p in R["base"]]
+    base = {s: solved(p) for s, p in R["base"].items()}
     out = {}
     for k, ps in R.items():
-        res = [solved(p) for p in ps]
-        row = {"solved": [sum(r.values()) for r in res], "mean": round(sum(sum(r.values()) for r in res) / len(res), 1),
-               "timeouts": [sum("timeout" in (r.get("error") or "") for r in rows_of(p)) for p in ps]}
-        n = min(len(res), len(base)) if not k.endswith("_v2") else 1
-        if k != "base":
-            tasks = sorted(base[0])
-            d = [sum(int(res[i][t]) - int(base[i][t]) for i in range(n)) / n for t in tasks]
-            row["vs_base_runs"] = n
+        res = {s: solved(p) for s, p in ps.items()}
+        row = {"solved": {s: sum(r.values()) for s, r in res.items()},
+               "mean": round(sum(sum(r.values()) for r in res.values()) / len(res), 1),
+               "timeouts": {s: sum("timeout" in (r.get("error") or "") for r in rows_of(p)) for s, p in ps.items()}}
+        seeds = [s for s in res if s in base]
+        if k != "base" and seeds:
+            tasks = sorted(base[seeds[0]])
+            d = [sum(int(res[s][t]) - int(base[s][t]) for s in seeds) / len(seeds) for t in tasks]
+            row["vs_base_seeds"] = seeds
             row["vs_base"] = round(sum(d) / len(d), 3)
             row["ci95"] = boot(d)
         out[k] = row
@@ -75,16 +90,18 @@ def table3(R):
 
 
 def churn(R, data):
-    base = [solved(p) for p in R["base"]] + [solved(f"{data}/base_runs/ood45/{s}") for s in ("s1", "s2", "s3")]
+    base_by_seed = {s: solved(p) for s, p in R["base"].items()}
+    base = list(base_by_seed.values()) + [solved(f"{data}/base_runs/ood45/{s}") for s in ("s1", "s2", "s3")]
     tasks = sorted(base[0])
     flips = lambda a, b: (sum(a[t] and not b[t] for t in tasks), sum(b[t] and not a[t] for t in tasks))
     out = {"base_vs_base": [sum(flips(a, b)) for a, b in itertools.combinations(base, 2)]}
     for k, ps in R.items():
         if k != "base":
-            g, l = flips(solved(ps[0]), base[0])
+            s0 = "2" if "2" in ps else next(iter(ps))
+            g, l = flips(solved(ps[s0]), base_by_seed[s0])
             out[k] = {"gained": g, "lost": l}
     never = [t for t in tasks if not any(b.get(t) for b in base)]
-    solvers = {t: [k for k, ps in R.items() if k not in ("base",) for p in ps if solved(p).get(t)] for t in never}
+    solvers = {t: [k for k, ps in R.items() if k not in ("base",) for p in ps.values() if solved(p).get(t)] for t in never}
     return out, {"base_runs": len(base), "per_run_solved": [sum(b.values()) for b in base], "never": solvers}
 
 
@@ -135,7 +152,7 @@ def solve_minutes(d):
 def curves(R, minutes=16):
     out = {}
     for k, ps in R.items():
-        mins = solve_minutes(ps[0])
+        mins = solve_minutes(main_run(ps))
         out[k] = [sum(m <= t for m in mins) for t in range(minutes)] + [len(mins)]
     return out
 
@@ -237,15 +254,15 @@ def training_pool(data):
 
 def early_samples(R, n=5, size=20, seed=0):
     """Cap share and submit rate on random 20-task samples of the seed-2 run, against base on the same tasks."""
-    tasks = sorted(solved(R["base"][0]))
+    tasks = sorted(solved(R["base"]["2"]))
     rng = random.Random(seed)
     out = []
     for _ in range(n):
         pick = set(rng.sample(tasks, size))
         row = {}
         for k, ps in R.items():
-            if not k.endswith("_v2"):
-                b = behaviour(ps[0], pick)
+            if not k.endswith("_v2") and "2" in ps:
+                b = behaviour(ps["2"], pick)
                 row[k] = {"cap_share_pct": b["cap_share_pct"], "submits": b["submits"]}
         out.append(row)
     return out
@@ -273,12 +290,12 @@ def main(data, out=None):
     R = runs(data)
     res = {"table3": table3(R)}
     res["churn"], res["never"] = churn(R, data)
-    res["table5"] = {k: per_call(ps[0]) for k, ps in R.items()}
+    res["table5"] = {k: per_call(main_run(ps)) for k, ps in R.items()}
     res["curves"] = curves(R)
     res["train_data"] = train_data(data)
     res["train_loss"] = train_loss(data)
     res["training_pool"] = training_pool(data)
-    res["behaviour"] = {f"{k} seed{2 if i == 0 else 1}": behaviour(p) for k, ps in R.items() for i, p in enumerate(ps)}
+    res["behaviour"] = {f"{k} seed{s}": behaviour(p) for k, ps in R.items() for s, p in ps.items()}
     res["early_samples"] = early_samples(R)
     if out:
         Path(out).write_text(json.dumps(res, indent=1))

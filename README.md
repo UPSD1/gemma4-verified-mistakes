@@ -23,8 +23,8 @@ pull request is also a competition public task were removed.
 | `packaging/` | Package mined tasks so the competition harness runs them like FreshSWE-Py |
 | `runner/` | Run the harness on a task set (`run_eval.py`); summarize base runs; `analyze_eval.py` (per-agent outcomes, repeated failing calls) and `paper_analyses.py` (Tables 1-2, Figure 2, how runs ended, nudges, thinking-cap loops, churn, training data and loss) compute every Section 5 number |
 | `notebooks/` | `reproduce_paper.ipynb`: rebuilds Tables 1-2, Figure 2 and the Section 4-5 counts from the released data on a CPU (also published as a Kaggle notebook) |
-| `training/` | Build the training data (`build_data.py`), resample from failures (`resample.py`), build splices and preference pairs (`build_splices.py`, `build_orig_pairs.py`), the v3 fixes (`fix_examples.py`), and train (`train_sft.py`, `train_dpo.py`) |
-| `runpod/` | Pod setup, vLLM serving, the evaluation scripts (`eval_arms.sh`, `queue_evals_final.sh`) and progress checks |
+| `training/` | Build the training data (`build_data.py`), resample from failures (`resample.py`), build splices and preference pairs (`build_splices.py`, `build_orig_pairs.py`), the v3 fixes (`fix_examples.py`), the submit-only data (`build_submit_only.py`), and train (`train_sft.py`, `train_dpo.py`) |
+| `runpod/` | Pod setup, vLLM serving, the evaluation scripts (`eval_arms.sh`, `queue_evals_final.sh`), progress checks, and `round2/` (the Section 5 follow-ups) |
 | `agents/` | The recovery instruction used by the prompt-only control |
 | `progress/` | Task ID lists the scripts read: training tasks and exclusions, the gRPC slice |
 
@@ -45,6 +45,9 @@ Settings (API keys, pod addresses) go in a `.env` copied from `.env.example`; it
    `python runner/analyze_eval.py --root <results> --seed 2 --base base` for per-agent outcomes, and
    `python runner/paper_analyses.py --data <dataset folder>` for Tables 1-2, Figure 2 and every Section 4-5 count.
    Or open `notebooks/reproduce_paper.ipynb`, which needs only the dataset and a CPU.
+6. **Round 2 (Section 5 follow-ups).** `python3 training/build_submit_only.py` (clean runs that called `submit_patch`),
+   then `runpod/round2/`: a second pass of (b) (`train_sft.py --init-adapter ... --order-offset 1`), the submit-only arm
+   at the same 2.25M-token budget (`--epochs 2.086`), and both evaluated with seeds 1 and 2.
 
 Training and evaluation ran on RunPod pods with one H100 or RTX PRO 6000. Every run in the paper used the competition harness (swegemma 0.2.11) and vLLM 0.19.1 serving the competition's
 4-bit Gemma 4 12B, with the adapter mounted.
